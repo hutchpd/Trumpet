@@ -227,27 +227,63 @@
     // Default key mapping
     const defaultKeyMap = { a: VALVE1, s: VALVE2, d: VALVE3 };
 
-    // Pragmatic Bb trumpet mid‑register fingering map by pitch class.
-    // These match common mid-range (written) fingerings: C 0, B 2, Bb 1, A 1+2, Ab 2+3, G 0, F# 2, F 1, E 1+2, Eb 2+3, D 1+3, C# 1+2+3.
-    const pitchClassToMask = {
-      'F#': VALVE1|VALVE2|VALVE3, 'Gb': VALVE1|VALVE2|VALVE3,
-      'C': 0, 'C#': VALVE1|VALVE2|VALVE3, 'Db': VALVE1|VALVE2|VALVE3,
-      'D': VALVE1|VALVE3,
-      'D#': VALVE2|VALVE3, 'Eb': VALVE2|VALVE3,
-      'E': VALVE1|VALVE2,
-      'F': VALVE1,
-      'G': 0,
-      'G#': VALVE2|VALVE3, 'Ab': VALVE2|VALVE3,
-      'A': VALVE1|VALVE2,
-      'A#': VALVE1, 'Bb': VALVE1,
-      'B': VALVE2
+    const noteToMask = {
+      'F#3': VALVE1|VALVE2|VALVE3, 'Gb3': VALVE1|VALVE2|VALVE3,
+      'G3':  VALVE1|VALVE3,
+      'G#3': VALVE2|VALVE3,        'Ab3': VALVE2|VALVE3,
+      'A3':  VALVE1|VALVE2,
+      'A#3': VALVE1,               'Bb3': VALVE1,
+      'B3':  VALVE2,
+      'C4':  0,
+      'C#4': VALVE1|VALVE2,        'Db4': VALVE1|VALVE2,
+      'D4':  VALVE1|VALVE3,
+      'D#4': VALVE2|VALVE3,        'Eb4': VALVE2|VALVE3,
+      'E4':  VALVE1|VALVE2,
+      'F4':  VALVE1,
+      'F#4': VALVE2,               'Gb4': VALVE2,
+      'G4':  0,
+      'G#4': VALVE2|VALVE3,        'Ab4': VALVE2|VALVE3,
+      'A4':  VALVE1|VALVE2,
+      'A#4': VALVE1,               'Bb4': VALVE1,
+      'B4':  VALVE2,
+      'C5':  0,
+      'C#5': VALVE1|VALVE2,        'Db5': VALVE1|VALVE2,
+      'D5':  VALVE1|VALVE3,
+      'D#5': VALVE2|VALVE3,        'Eb5': VALVE2|VALVE3,
+      'E5':  VALVE1|VALVE2,
+      'F5':  VALVE1,
+      'F#5': VALVE2,               'Gb5': VALVE2,
+      'G5':  0,
+      'G#5': VALVE2|VALVE3,        'Ab5': VALVE2|VALVE3,
+      'A5':  VALVE1|VALVE2,
+      'A#5': VALVE1,               'Bb5': VALVE1,
+      'B5':  VALVE2,
+      'C6':  0,
+      'C#6': VALVE1|VALVE2,        'Db6': VALVE1|VALVE2,
+      'D6':  VALVE1|VALVE3
     };
+    function noteNameToMask(name){
+      const m = /^([A-Ga-g])([b#]?)(-?\d+)$/.exec(name||"");
+      if (!m) return null;
+      const key = m[1].toUpperCase() + (m[2]||'') + m[3];
+      return (key in noteToMask) ? noteToMask[key] : null;
+    }
 
-    const noteNameToPitchClass = (name) => {
-      // Examples: "C#4", "Eb5" -> "C#", "Eb"
-      if (!name) return 'C';
-      return name.replace(/-?\d+$/, ''); // strip trailing octave
-    };
+    // --- Highway color by pitch *range* (E3..D6 split into 4 bins) ---
+    const COLOR_LOW   = '#22c55e';  // green
+    const COLOR_MID   = '#eab308';  // yellow
+    const COLOR_HI    = '#f97316';  // orange
+    const COLOR_TOP   = '#ef4444';  // red
+    const MIDI_MIN = 52;  // E3
+    const MIDI_MAX = 86;  // D6
+    function colorForMidi(m){
+      const t = clamp((m - MIDI_MIN) / (MIDI_MAX - MIDI_MIN), 0, 1);
+      if (t < 0.25) return COLOR_LOW;
+      if (t < 0.50) return COLOR_MID;
+      if (t < 0.75) return COLOR_HI;
+      return COLOR_TOP;
+    }
+
 
     // MIDI <-> note helpers
     const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -297,12 +333,11 @@
     // Build lane events (one per lane per note) for canvas from MIDI notes
     function buildLaneEvents(notes, bpm, maskFromName, visualLookahead=3.5) {
       const events = [];
-      const laneColors = [getComputedStyle(document.documentElement).getPropertyValue('--laneA').trim() || '#44e0a6',
-                          getComputedStyle(document.documentElement).getPropertyValue('--laneB').trim() || '#ffca3a',
-                          getComputedStyle(document.documentElement).getPropertyValue('--laneC').trim() || '#7cc6ff'];
       for (const n of notes) {
         const mask = maskFromName(n.name);
+        // Skip notes that are out of our Yamaha map (no draw, no scoring)
         if (mask === null || mask === undefined) continue;
+        const noteColor = colorForMidi(n.midi ?? freqToMidi(n.freq || 440));
         const lanes = [VALVE1, VALVE2, VALVE3];
         for (let i = 0; i < lanes.length; i++) {
           const bit = lanes[i];
@@ -316,7 +351,7 @@
               hit: false,
               judged: false,
               // render cache
-              color: laneColors[i],
+              color: noteColor,
             });
           }
         }
@@ -331,7 +366,7 @@
             endTicks: (n.ticks || 0) + (n.durationTicks || 0),
             hit: false,
             judged: false,
-            color: 'rgba(255,255,255,0.9)' // base color; we'll lower alpha when drawing
+            color: noteColor
           });
         }
 
@@ -891,16 +926,20 @@
 
             // OPEN note? Draw a full-width translucent white band (no perspective).
             if (ev.open) {
+              // trailing glow (use the note color)
               ctx.save();
-              // trailing glow
               ctx.globalCompositeOperation = 'lighter';
-              ctx.fillStyle = 'rgba(255,255,255,0.10)';
+              ctx.globalAlpha = 0.10;
+              ctx.fillStyle = ev.color;
               ctx.fillRect(0, yTop - 4, width, heightNow + 8);
               ctx.restore();
 
-              // main band
-              ctx.fillStyle = 'rgba(255,255,255,0.22)';
+              // main band in the note color
+              ctx.save();
+              ctx.globalAlpha = 0.28;
+              ctx.fillStyle = ev.color;
               ctx.fillRect(0, yTop, width, heightNow);
+              ctx.restore();
 
               // subtle edges
               ctx.strokeStyle = 'rgba(255,255,255,0.28)';
@@ -1445,7 +1484,7 @@
         schedulePart(selectedNotes);
 
         // Prepare lane events
-        const events = buildLaneEvents(selectedNotes, bpm0, (nm)=> pitchClassToMask[noteNameToPitchClass(nm)], lookahead);
+        const events = buildLaneEvents(selectedNotes, bpm0, noteNameToMask, lookahead);
         setLaneEvents(events);
 
         // Configure Tone transport
@@ -1469,7 +1508,7 @@
         }
         setNotes(n);
         schedulePart(n);
-        const events = buildLaneEvents(n, bpm, (nm)=> pitchClassToMask[noteNameToPitchClass(nm)], lookahead);
+        const events = buildLaneEvents(n, bpm, noteNameToMask, lookahead);
         setLaneEvents(events);
         setStats({ hitTime: 0, missTime: 0 });
         statsRef.current = { hitTime: 0, missTime: 0 };
@@ -1540,8 +1579,10 @@
         const startT = (n.ticks || 0);
         const endT   = startT + (n.durationTicks || 0);
         if (startT <= ticksNow && ticksNow < endT) {
+          const m = noteNameToMask(n.name);
+          if (m === null) return null;            // out-of-range -> ignore for scoring
           return {
-            mask: pitchClassToMask[noteNameToPitchClass(n.name)],
+            mask: m,
             startTicks: startT,
             endTicks: endT
           };
