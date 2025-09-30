@@ -364,6 +364,23 @@
     const midiToFreq = (m) => 440 * Math.pow(2, (m - 69) / 12);
     const freqToMidi = (f) => Math.round(69 + 12 * Math.log2(f / 440));
 
+    function noteNameToMidi(name) {
+      const m = /^([A-Ga-g])([b#]?)(-?\d+)$/.exec(name || "");
+      if (!m) return null;
+      const L = m[1].toUpperCase();
+      const acc = m[2] || '';
+      const oct = parseInt(m[3], 10);
+      const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[L];
+      if (base === undefined) return null;
+      let semi = base + (acc === '#' ? 1 : acc === 'b' ? -1 : 0);
+      return (oct + 1) * 12 + semi;
+    }
+    function centsDiff(freqA, freqB) {
+      if (freqA <= 0 || freqB <= 0) return Infinity;
+      return 1200 * Math.log2(freqA / freqB);
+    }
+
+
     // Duration quantiser: measure-beats -> VexFlow duration for a given denominator.
     function quantizeBeats(beats, den = 4) {
       // Beats contributed by each symbol within this time signature.
@@ -527,6 +544,7 @@
       currentTicks,
       running,
       width,
+      micEnabled, micNote, expertMode, toleranceCents = 35,
       height,
       measuresPerRow = 2,
       onSeekTicks
@@ -647,6 +665,7 @@
                 n.setAttribute('data-start-ticks', String(e.startTicks || 0));
                 n.setAttribute('data-end-ticks', String(e.endTicks || 0));
                 n.setAttribute('data-measure', String(mIdx));
+                const midi = noteNameToMidi(e.name); if (midi != null) n.setAttribute('data-midi', String(midi));
               }
 
               tickables.push(n);
@@ -701,7 +720,8 @@
             noteElsRef.current = Array.from(nodes).map(g => ({
               el: g,
               start: +(g.getAttribute('data-start-ticks') || '0'),
-              end: +(g.getAttribute('data-end-ticks') || '0')
+              end: +(g.getAttribute('data-end-ticks') || '0'),
+              midi: (g.hasAttribute('data-midi') ? +(g.getAttribute('data-midi') || 'NaN') : NaN)
             })).sort((a, b) => a.start - b.start);
           }
         } catch { }
@@ -821,14 +841,13 @@
         if (!list || !list.length) return;
         const t = currentTicks || 0;
         const tickWindow = Math.max(1, (ppq || 480) * 0.02);
-        // find the current note
+        // find the current score note (by ticks)
         let found = null;
-        // linear scan is fine for MVP; could be optimized later
         for (let i=0;i<list.length;i++){
           const n = list[i];
           if (t >= (n.start - tickWindow) && t <= (n.end + tickWindow)) { found = n; break; }
         }
-        // reset all to UI color, then paint current as green
+        // painter
         const paint = (el, fill) => {
           el.querySelectorAll('path, ellipse, circle, rect').forEach(n=>{
             if (n.getAttribute('data-skip-style') === '1') return;
@@ -836,17 +855,38 @@
           });
           if (fill === '#22c55e') el.classList.add('note-glow'); else el.classList.remove('note-glow');
         };
-        // for performance: only paint changed elements
-        if (!ScoreDisplay.__lastHi) {
-          list.forEach(n=>paint(n.el, '#cbd5e1'));
-        } else if (ScoreDisplay.__lastHi !== found?.el) {
+        // Clear previous highlight if needed
+        const clearPrev = () => {
+          if (ScoreDisplay.__lastHi) {
+            paint(ScoreDisplay.__lastHi, '#cbd5e1');
+            ScoreDisplay.__lastHi = null;
+          }
+        };
+        // Only show mic-driven colouring if mic is enabled
+        if (!micEnabled || !micNote) { clearPrev(); return; }
+        // Reset all when target note changes
+        if (ScoreDisplay.__lastHi && ScoreDisplay.__lastHi !== found?.el) {
           paint(ScoreDisplay.__lastHi, '#cbd5e1');
+          ScoreDisplay.__lastHi = null;
         }
-        if (found) {
-          paint(found.el, '#22c55e');
+        if (!found) { clearPrev(); return; }
+        // Decide green/red using tolerance (unless expert mode)
+        let good = false;
+        // expected MIDI from DOM (may be NaN if unavailable)
+        const expMidi = Number.isFinite(found.midi) ? found.midi : NaN;
+        if (Number.isFinite(expMidi)) {
+          if (expertMode) {
+            good = (micNote.midi === expMidi);
+          } else {
+            const targetFreq = midiToFreq(expMidi);
+            const diff = centsDiff(micNote.freq, targetFreq);
+            good = Math.abs(diff) <= (toleranceCents || 35);
+          }
         }
-        ScoreDisplay.__lastHi = found?.el || null;
-      }, [currentTicks, ppq]);
+        const color = good ? '#22c55e' : '#ef4444';
+        paint(found.el, color);
+        ScoreDisplay.__lastHi = found.el;
+      }, [currentTicks, ppq, micEnabled, micNote, expertMode, toleranceCents]);
 
 
       // Drag to scroll + click to seek
@@ -1454,7 +1494,8 @@
       open, onClose,
       keyMap, setKeyMap,
       lookahead, setLookahead,
-      micEnabled, setMicEnabled
+      micEnabled, setMicEnabled,
+      expertMode, setExpertMode
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
 
@@ -1531,6 +1572,14 @@
                 <input type="checkbox" checked={micEnabled} onChange={(e) => setMicEnabled(e.target.checked)} />
                 <span>Enable microphone pitch feedback</span>
               </label>
+              <label className="flex items-center gap-2 text-sm mt-2">
+                <input
+                  type="checkbox"
+                  checked={expertMode}
+                  onChange={(e) => setExpertMode(e.target.checked)}
+                />
+                <span>Expert mode (no tolerance)</span>
+              </label>
               <p className="text-xs text-slate-400 mt-2">Simple autocorrelation detector; use a quiet room for best results.</p>
             </section>
 
@@ -1571,6 +1620,7 @@
       const [pressedMask, setPressedMask] = useState(0);
       const [lookahead, setLookahead] = useState(3.5);
       const [micEnabled, setMicEnabled] = useState(false);
+      const [expertMode, setExpertMode] = useState(false);
 
       const [midiMeta, setMidiMeta] = useState({ title: 'No song loaded', tracks: [] });
       const [trackIndex, setTrackIndex] = useState(0);
@@ -1959,6 +2009,10 @@
                 height={scoreHeight}
                 measuresPerRow={2}
                 onSeekTicks={handleSeekTicks}
+                micEnabled={micEnabled}
+                micNote={micNote}
+                expertMode={expertMode}
+                toleranceCents={35}
               />
             </div>
           </section>
@@ -2025,6 +2079,8 @@
             setLookahead={setLookahead}
             micEnabled={micEnabled}
             setMicEnabled={setMicEnabled}
+            expertMode={expertMode}
+            setExpertMode={setExpertMode}
           />
         </div>
       );
