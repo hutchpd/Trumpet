@@ -1533,7 +1533,7 @@
      ******************************/
     function Controls({
       isLoaded, running, onPlayPause, bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
-      stats, micNote, micEnabled, waitMode, onWaitMode
+      stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis
     }) {
       return (
         <div className="hud w-full">
@@ -1581,6 +1581,24 @@
             >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
 
           </label>
+
+          {/* Transposition */}
+          <label className="pill flex items-center gap-2 text-sm">
+            <span className="text-slate-300">Transposition</span>
+            <select
+              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+              value={transposeSemis}
+              onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
+              title="Shift mic (concert) to written pitch"
+            >
+              <option value={0}>C (0)</option>
+              <option value={2}>B♭ (+2)</option>
+              <option value={7}>F (+7)</option>
+              <option value={9}>E♭ (+9)</option>
+            </select>
+            <span className="text-slate-400 text-xs">(semitones)</span>
+          </label>
+
 
           <label className="ml-auto text-sm flex items-center gap-2">
             <input
@@ -1651,7 +1669,8 @@
       keyMap, setKeyMap,
       lookahead, setLookahead,
       micEnabled, setMicEnabled,
-      expertMode, setExpertMode
+      expertMode, setExpertMode,
+      transposeSemis, setTransposeSemis
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
 
@@ -1737,11 +1756,46 @@
                 <span>Expert mode (no tolerance)</span>
               </label>
               <p className="text-xs text-slate-400 mt-2">Simple autocorrelation detector; use a quiet room for best results.</p>
+              <div className="mt-3">
+            <label className="text-sm text-slate-300 block mb-1">Instrument transposition (semitones)</label>
+            <select
+              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+              value={transposeSemis}
+              onChange={(e) => setTransposeSemis(parseInt(e.target.value, 10))}
+            >
+              <option value={0}>C (0)</option>
+              <option value={2}>B♭ (+2)</option>
+              <option value={7}>F (+7)</option>
+              <option value={9}>E♭ (+9)</option>
+            </select>
+            <p className="text-xs text-slate-400 mt-1">
+              Converts mic’s concert pitch to written pitch for comparison/overlay.
+            </p>
+          </div>
+
             </section>
 
             <footer className="text-xs text-slate-400">
-              <p>Tip: Press Space to Play/Pause.</p>
+              <div className="mt-4 pt-3 border-t border-slate-700 space-y-2">
+                <a
+                  href="https://findonsoftware.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-slate-300 hover:text-white"
+                >
+                  Built by Findon Software
+                </a>
+                <a
+                  href="https://github.com/hutchpd/Trumpet/issues"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-slate-300 hover:text-white"
+                >
+                  Feedback &amp; issues on GitHub
+                </a>
+              </div>
             </footer>
+
           </div>
         </div>
       );
@@ -1778,6 +1832,7 @@
       const [micEnabled, setMicEnabled] = useState(false);
       const [expertMode, setExpertMode] = useState(false);
       const [waitMode, setWaitMode] = useState(false);
+      const [transposeSemis, setTransposeSemis] = useState(2); // default B♭
 
       const [midiMeta, setMidiMeta] = useState({ title: 'No song loaded', tracks: [] });
       const [trackIndex, setTrackIndex] = useState(0);
@@ -1795,8 +1850,23 @@
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
       const pressedMaskRef = useRef(0);
       useEffect(() => { pressedMaskRef.current = pressedMask; }, [pressedMask]);
-      const micNote = useMicPitch(micEnabled);
-      useEffect(() => { window.__lastMicNote = micNote || null; }, [micNote]);
+      const micNoteRaw = useMicPitch(micEnabled);
+      // Convert mic (concert) -> written pitch for comparisons/overlay/display
+      const micNote = useMemo(() => {
+        if (!micNoteRaw) return null;
+        const semis = transposeSemis || 0;
+        return {
+          midi: micNoteRaw.midi + semis,
+          // shift freq so cents comparisons remain valid against written target
+          freq: micNoteRaw.freq * Math.pow(2, semis / 12),
+          // keep cents relative to shifted ref: recompute against transposed midi
+          cents: (() => {
+            const ref = midiToFreq(micNoteRaw.midi + semis);
+            return Math.floor(1200 * Math.log2((micNoteRaw.freq * Math.pow(2, semis / 12)) / ref));
+          })()
+        };
+      }, [micNoteRaw, transposeSemis]);
+      useEffect(() => { window.__lastMicNoteWritten = micNote || null; }, [micNote]);
 
       const { schedulePart, clearPart, initAudio, readyRef, stopAll, setBackingMuted } = useToneSetup();
 
@@ -2205,12 +2275,12 @@
               if (micEnabled && Number.isFinite(gate.expectedMidi)) {
                 const tol = 35; // cents
                 const targetFreq = midiToFreq(gate.expectedMidi);
-                if (window.__lastMicNote?.midi) {
-                  // fast path using last midi quantization
-                  ok = (window.__lastMicNote.midi === gate.expectedMidi);
+                if (window.__lastMicNoteWritten?.midi) {
+                  // Compare written mic midi against written expected midi
+                  ok = (window.__lastMicNoteWritten.midi === gate.expectedMidi);
                 }
-                if (!ok && window.__lastMicNote?.freq && !expertMode) {
-                  const c = centsDiff(window.__lastMicNote.freq, targetFreq);
+                if (!ok && window.__lastMicNoteWritten?.freq && !expertMode) {
+                  const c = centsDiff(window.__lastMicNoteWritten.freq, targetFreq);
                   ok = Math.abs(c) <= tol;
                 }
               } else {
@@ -2451,6 +2521,8 @@
               micEnabled={micEnabled}
               waitMode={waitMode}
               onWaitMode={setWaitMode}
+              transposeSemis={transposeSemis}
+              onTransposeSemis={setTransposeSemis}
             />
           </footer>
 
@@ -2466,6 +2538,8 @@
             setMicEnabled={setMicEnabled}
             expertMode={expertMode}
             setExpertMode={setExpertMode}
+            transposeSemis={transposeSemis}
+            setTransposeSemis={setTransposeSemis}
           />
         </div>
       );
