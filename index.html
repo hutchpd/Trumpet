@@ -539,6 +539,17 @@
         readyRef.current = true;
       }, []);
 
+      const setBackingMuted = useCallback((muted) => {
+        // PolySynth doesn't have a reliable '.mute'; use volume slam instead.
+        try {
+          if (synthRef.current) {
+            synthRef.current.volume.value = muted ? -120 : -8;
+            if (muted) synthRef.current.releaseAll?.();
+          }
+        } catch {}
+      }, []);
+
+
       const schedulePart = useCallback(async (toneNotes, tickScale = 1) => {
         if (!toneNotes?.length) return;
         await initAudio();
@@ -566,6 +577,21 @@
         partRef.current = part;
       }, [initAudio]);
 
+      const clearPart = useCallback(() => {
+        if (partRef.current) {
+          try { partRef.current.dispose(); } catch {}
+          partRef.current = null;
+        }
+      }, []);
+
+
+      const stopAll = useCallback(() => {
+        try {
+          synthRef.current?.releaseAll?.();
+        } catch {}
+      }, []);
+
+
       useEffect(() => {
         return () => {
           try { partRef.current?.dispose(); } catch { }
@@ -573,7 +599,7 @@
         };
       }, []);
 
-      return { schedulePart, initAudio, readyRef };
+      return { schedulePart, clearPart, initAudio, readyRef, stopAll, setBackingMuted };
 
     }
 
@@ -918,6 +944,7 @@
           lastMeasureRef.current = idx;
         }
       }, [currentTicks, ticksPerMeasure, running, measuresPerRow]);
+
 
 
       const getExpectedNoteAtTicks = React.useCallback((ticksNow) => {
@@ -1506,7 +1533,7 @@
      ******************************/
     function Controls({
       isLoaded, running, onPlayPause, bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
-      stats, micNote, micEnabled
+      stats, micNote, micEnabled, waitMode, onWaitMode
     }) {
       return (
         <div className="hud w-full">
@@ -1541,6 +1568,18 @@
             >
               {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
             </select>
+
+            {/* Hold-to-Advance toggle */}
+            <button
+              type="button"
+              onClick={() => onWaitMode(!waitMode)}
+              className={
+               "ml-2 px-3 py-1 rounded border text-xs " +
+                (waitMode ? "border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border-slate-600 text-slate-200")
+              }
+              title="Require holding each correct note before continuing"
+            >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
+
           </label>
 
           <label className="ml-auto text-sm flex items-center gap-2">
@@ -1738,6 +1777,7 @@
       const [lookahead, setLookahead] = useState(3.5);
       const [micEnabled, setMicEnabled] = useState(false);
       const [expertMode, setExpertMode] = useState(false);
+      const [waitMode, setWaitMode] = useState(false);
 
       const [midiMeta, setMidiMeta] = useState({ title: 'No song loaded', tracks: [] });
       const [trackIndex, setTrackIndex] = useState(0);
@@ -1756,8 +1796,9 @@
       const pressedMaskRef = useRef(0);
       useEffect(() => { pressedMaskRef.current = pressedMask; }, [pressedMask]);
       const micNote = useMicPitch(micEnabled);
+      useEffect(() => { window.__lastMicNote = micNote || null; }, [micNote]);
 
-      const { schedulePart, initAudio, readyRef } = useToneSetup();
+      const { schedulePart, clearPart, initAudio, readyRef, stopAll, setBackingMuted } = useToneSetup();
 
       // Stable sizing via ResizeObserver (prevents layout creep)
       useEffect(() => {
@@ -1866,13 +1907,18 @@
         const transportPPQ = Tone.Transport.PPQ || 192;
         const midiPPQ = midiMeta.ppq || 480;
         const scaleToTransport = transportPPQ / midiPPQ;
-        schedulePart(n, scaleToTransport);
+        if (!waitMode) {
+          schedulePart(n, scaleToTransport);
+        } else {
+          clearPart();
+          try { Tone.Transport.stop(); } catch {}
+        }
         const events = buildLaneEvents(n, bpm, noteNameToMask, lookahead);
         setLaneEvents(events);
         setStats({ hitTime: 0, missTime: 0 });
         statsRef.current = { hitTime: 0, missTime: 0 };
         setRunning(false);
-      }, [trackIndex]);
+      }, [trackIndex, waitMode]);
 
       // Update BPM
       useEffect(() => {
@@ -1886,8 +1932,24 @@
       const togglePlay = async () => {
         await initAudio();
         if (!notes.length) return;
+        if (waitMode) {
+          if (!running) {
+            try { Tone.Transport.stop(); } catch {}
+            clearPart();              // ensure nothing is scheduled
+            setRunning(true);         // drive our own gate loop/UI
+            // Optional: arm the first playable note right away
+            armGateForIndex(0);
+          } else {
+            setRunning(false);
+            gateRef.current = { active: false, noteIndex: -1 };
+            try { Tone.Transport.stop(); } catch {}
+            clearPart();
+          }
+          return;
+        }
+        // Normal mode: Transport drives playback
         if (Tone.Transport.state !== 'started') {
-          Tone.Transport.start('+0.05'); // tiny offset to avoid first-frame stutter
+          Tone.Transport.start('+0.05');
           setRunning(true);
         } else {
           Tone.Transport.pause();
@@ -1933,7 +1995,45 @@
         const safeMidi = Math.max(0, Math.round(midiTicks || 0));
         Tone.Transport.ticks = Math.round(safeMidi * toTransport);
         setTransportTicks(safeMidi); // UI stays in MIDI ticks space
+        // Clear any active gate and add a brief grace window so the cursor stays put
+        gateRef.current = { active: false, noteIndex: -1 };
+        seekGraceUntilRef.current = performance.now() / 1000 + 0.30; // 300ms grace
+        stopAll();
+
       }, [midiMeta.ppq]);
+
+      const armGateForIndex = useCallback((idx) => {
+        const n = notes[idx];
+        if (!n) return false;
+
+        const midiPPQ = midiMeta.ppq || 480;
+        const transportPPQ = Tone.Transport.PPQ || 192;
+        const toTransport = transportPPQ / midiPPQ;
+
+        const mask = noteNameToMask(n.name);
+
+        try {
+          Tone.Transport.pause();
+          Tone.Transport.ticks = Math.round((n.ticks || 0) * toTransport);
+          stopAll();
+        } catch {}
+
+        gateRef.current = {
+          active: true,
+          noteIndex: idx,
+          requiredTicks: n.durationTicks || 0,
+          holdTicks: 0,
+          mask: mask === null ? 0 : mask, // treat unmapped as open
+          startTicks: n.ticks || 0,
+          endTicks: (n.ticks || 0) + (n.durationTicks || 0),
+          expectedMidi: n.midi ?? null,
+          lastWallSec: performance.now() / 1000
+        };
+
+        // keep the UI cursor pinned
+        handleSeekTicks(n.ticks || 0);
+        return true;
+      }, [notes, midiMeta.ppq, stopAll, handleSeekTicks]);
 
 
       // helper: find required mask at time t (monophonic expectation)
@@ -1965,6 +2065,15 @@
 
       // Track last time the key mask changed (for transition grace)
       const lastKeyChangeSecRef = useRef(0);
+
+      // Gate for Hold-to-Advance mode
+      const gateRef = useRef({
+        active: false, noteIndex: -1, requiredTicks: 0, holdTicks: 0,
+        mask: 0, startTicks: 0, endTicks: 0, expectedMidi: null,
+        lastWallSec: 0
+      });
+      // short grace after user seeks so the gate doesn't snap the cursor back
+      const seekGraceUntilRef = useRef(0);
 
       useEffect(() => {
         const markChange = () => { lastKeyChangeSecRef.current = performance.now() / 1000; };
@@ -1999,6 +2108,75 @@
         };
       }, [keyMap]); // (replaces the previous key handlers)
 
+      // Keep backing muted in Play-to-Advance, and when toggled ON mid-run
+      useEffect(() => {
+        setBackingMuted(waitMode);
+
+        // If user turns on waitMode while already running, snap into gated state now.
+        if (waitMode && running && notes.length) {
+          // Kill any scheduled playback first, then gate.
+          try { Tone.Transport.stop(); } catch {}
+          clearPart();
+          const midiPPQ = midiMeta.ppq || 480;
+          const transportPPQ = Tone.Transport.PPQ || 192;
+          const toMidi = midiPPQ / transportPPQ;
+          const toTransport = transportPPQ / midiPPQ;
+
+          // Current position in MIDI ticks
+          let nowMidi = (readyRef.current ? Tone.Transport.ticks : 0) * toMidi;
+
+          // Find the note we are currently inside
+          let idx = -1;
+          for (let i = 0; i < notes.length; i++) {
+            const s = notes[i].ticks || 0;
+            const e = s + (notes[i].durationTicks || 0);
+            if (s <= nowMidi && nowMidi < e) { idx = i; break; }
+          }
+
+          if (idx >= 0) {
+            const n = notes[idx];
+            const mask = noteNameToMask(n.name);
+            if (mask !== null) {
+              try {
+                // Pause and snap transport to the *start* of this note
+                Tone.Transport.pause();
+                Tone.Transport.ticks = Math.round((n.ticks || 0) * toTransport);
+                stopAll();
+              } catch {}
+              // Arm the hold-to-advance gate immediately
+              gateRef.current = {
+                active: true,
+                noteIndex: idx,
+                requiredTicks: n.durationTicks || 0,
+                holdTicks: 0,
+                mask,
+                startTicks: n.ticks || 0,
+                endTicks: (n.ticks || 0) + (n.durationTicks || 0),
+                expectedMidi: n.midi ?? null,
+                lastWallSec: performance.now() / 1000
+              };
+              // Keep the UI cursor pinned too
+              setTransportTicks(n.ticks || 0);
+            }
+          }
+        }
+
+        // If user turns waitMode OFF mid-run, clear the gate and carry on normally.
+        if (!waitMode) {
+          // Re-schedule current notes for audible playback again.
+          const transportPPQ = Tone.Transport.PPQ || 192;
+          const midiPPQ = midiMeta.ppq || 480;
+          const scaleToTransport = transportPPQ / midiPPQ;
+          schedulePart(notes, scaleToTransport);
+
+          if (running && gateRef.current.active) {
+            gateRef.current = { active: false, noteIndex: gateRef.current.noteIndex };
+            try { Tone.Transport.start('+0.02'); } catch {}
+          }
+        }
+      }, [waitMode, running, notes, midiMeta.ppq, readyRef, stopAll, setBackingMuted, schedulePart, clearPart]);
+
+
       useEffect(() => {
         let raf = null;
         let lastMidiTicks = 0; // we keep all UI/scoring in MIDI ticks
@@ -2006,7 +2184,94 @@
           const midiPPQ = midiMeta.ppq || 480;
           const transportPPQ = Tone.Transport.PPQ || 192;
           const toMidi = midiPPQ / transportPPQ;
-          const nowMidi = readyRef.current ? Tone.Transport.ticks * toMidi : 0;
+          let nowMidi = readyRef.current ? Tone.Transport.ticks * toMidi : 0;
+
+          // -------------------------
+          // Hold-to-Advance gate logic
+          // -------------------------
+          if (running && waitMode && notes.length) {
+            const gate = gateRef.current;
+            const secPerTick = 60 / (midiPPQ * bpm);
+            const toTransport = transportPPQ / midiPPQ;
+
+            if (gate.active) {
+              // accumulate "correctly held" time while transport is paused at note start
+              const wallNow = performance.now() / 1000;
+              const dtSec = Math.max(0, wallNow - (gate.lastWallSec || wallNow));
+              gate.lastWallSec = wallNow;
+
+              // allow mic based or key-based gating
+              let ok = false;
+              if (micEnabled && Number.isFinite(gate.expectedMidi)) {
+                const tol = 35; // cents
+                const targetFreq = midiToFreq(gate.expectedMidi);
+                if (window.__lastMicNote?.midi) {
+                  // fast path using last midi quantization
+                  ok = (window.__lastMicNote.midi === gate.expectedMidi);
+                }
+                if (!ok && window.__lastMicNote?.freq && !expertMode) {
+                  const c = centsDiff(window.__lastMicNote.freq, targetFreq);
+                  ok = Math.abs(c) <= tol;
+                }
+              } else {
+                const withinChangeGrace = (wallNow - lastKeyChangeSecRef.current) < 0.060;
+                const heldMask = pressedMaskRef.current;
+                ok = (heldMask === gate.mask) || withinChangeGrace;
+              }
+              if (ok) gate.holdTicks += dtSec / secPerTick;
+
+              // Keep cursor/UI pinned to the start of this note.
+              nowMidi = gate.startTicks;
+
+              // Completed required duration? Jump to end of note and resume.
+              if (gate.holdTicks >= (gate.requiredTicks || 0)) {
+                // Advance to the *next* playable note and re-arm the gate (stay paused)
+                let nextIdx = gate.noteIndex + 1;
+                // Skip any notes that don't map to a valve combo, if any
+                while (nextIdx < notes.length && noteNameToMask(notes[nextIdx].name) === null) nextIdx++;
+
+                if (!armGateForIndex(nextIdx)) {
+                  // No next note — end of piece
+                  try { Tone.Transport.stop(); } catch {}
+                  setRunning(false);
+                  gateRef.current = { active: false, noteIndex: -1 };
+                }
+                // Important: do NOT call Transport.start() here, else it plays the entire song.
+              }
+            } else {
+              // If we're currently inside a note, pause at its start and start gating
+              let idx = -1;
+              for (let i = 0; i < notes.length; i++) {
+                const s = notes[i].ticks || 0;
+                const e = s + (notes[i].durationTicks || 0);
+                if (s <= nowMidi && nowMidi < e) { idx = i; break; }
+              }
+              const okToGate = (performance.now() / 1000) > (seekGraceUntilRef.current || 0);
+              if (idx >= 0 && okToGate) {
+                const n = notes[idx];
+                const mask = noteNameToMask(n.name);
+                if (mask !== null) {
+                  try {
+                    Tone.Transport.pause();
+                    Tone.Transport.ticks = Math.round((n.ticks || 0) * (toTransport));
+                    stopAll();
+                  } catch {}
+                  gateRef.current = {
+                    active: true,
+                    noteIndex: idx,
+                    requiredTicks: n.durationTicks || 0,
+                    holdTicks: 0,
+                    mask,
+                    startTicks: n.ticks || 0,
+                    endTicks: (n.ticks || 0) + (n.durationTicks || 0),
+                    expectedMidi: n.midi ?? null,
+                    lastWallSec: performance.now() / 1000
+                  };
+                  nowMidi = n.ticks || 0;
+                }
+              }
+            }
+          }
           setTransportTicks(nowMidi);
 
           const dtTicks = Math.max(0, nowMidi - lastMidiTicks);
@@ -2053,7 +2318,7 @@
         }
         raf = requestAnimationFrame(tick);
         return () => { if (raf) cancelAnimationFrame(raf); };
-      }, [running, readyRef, getRequiredMaskAtTicks, bpm, midiMeta.ppq]);
+      }, [running, waitMode, readyRef, getRequiredMaskAtTicks, bpm, midiMeta.ppq, notes]);
 
       // Song title
       const songTitle = midiMeta.title || 'Trumpet Trainer';
@@ -2184,6 +2449,8 @@
               stats={stats}
               micNote={micNote}
               micEnabled={micEnabled}
+              waitMode={waitMode}
+              onWaitMode={setWaitMode}
             />
           </footer>
 
