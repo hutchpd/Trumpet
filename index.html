@@ -1777,7 +1777,7 @@
               <div className="col-span-2 flex justify-center">
                 <div className="transport" role="group" aria-label="Transport">
                   <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-                  <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
+                  <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
                   <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
                 </div>
               </div>
