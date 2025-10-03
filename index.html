@@ -2251,6 +2251,17 @@ function Controls({
         return () => ro.disconnect();
       }, []);
 
+      function fixUtf8Mojibake(s) {
+        try {
+          // Heuristic: only attempt if it looks mojibaked
+          if (!/[ÃÂâ]/.test(s)) return s;
+          const bytes = new Uint8Array(Array.from(s, ch => ch.charCodeAt(0) & 0xFF));
+          const rec = new TextDecoder('utf-8').decode(bytes);
+          return rec;
+        } catch { return s; }
+      }
+
+
       // Shared MIDI loader (from ArrayBuffer), used by both URL & File
       const parseAndLoadMidi = async (arrayBuffer, sourceTitle = 'Untitled') => {
         const MidiClass = window.Midi || (window['tonejsMidi'] && window['tonejsMidi'].Midi) || window['TonejsMidi']?.Midi;
@@ -2259,7 +2270,7 @@ function Controls({
           return;
         }
         const midi = new MidiClass(arrayBuffer);
-        const title = midi.header.name || sourceTitle || 'Untitled';
+        const title = fixUtf8Mojibake(midi.header.name || '') || sourceTitle || 'Untitled';
         const tempos = midi.header.tempos?.length ? midi.header.tempos : [{ bpm: 120, ticks: 0 }];
         const bpm0 = tempos[0].bpm || 120;
         const ts = midi.header.timeSignatures?.length ? midi.header.timeSignatures[0] : { timeSignature: [4, 4] };
@@ -2267,7 +2278,7 @@ function Controls({
 
         const playableTracks = midi.tracks
           .map((t, i) => ({
-            name: t.name || t.instrument?.name || `Track ${i + 1}`,
+            name: fixUtf8Mojibake(t.name || t.instrument?.name || `Track ${i + 1}`),
             srcIndex: i,
             notes: (t.notes || []).map(n => ({
               name: n.name, midi: n.midi, time: n.time, duration: n.duration,
