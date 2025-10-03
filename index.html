@@ -1670,150 +1670,228 @@
     /******************************
      * Controls
      ******************************/
-    function Controls({
-      isLoaded, running, onPlayPause, onStop, onGoStart,
-      bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
-      stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis
-    }) {
-      if (running) {
-        return (
-          <div className="hud w-full flex items-center justify-center">
+function Controls({
+  isLoaded, running, onPlayPause, onStop, onGoStart,
+  bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
+  stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis,
+  isMobile
+}) {
+  // Minimal when running (both desktop & mobile)
+  if (running) {
+    return (
+      <div className="hud w-full flex items-center justify-center">
+        <div className="transport" role="group" aria-label="Transport">
+          <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
+          <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
+          <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Mobile-first grid when *not* running
+  if (isMobile) {
+    return (
+      <div className="hud w-full">
+        <div className="grid grid-cols-2 gap-3 w-full">
+          {/* Transport – centered & big */}
+          <div className="col-span-2 flex justify-center">
             <div className="transport" role="group" aria-label="Transport">
               <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
-              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹) — pause and go to start" aria-label="Stop">⏹</button>
-            </div>
-          </div>
-        );
-      }
-      return (
-        <div className="hud w-full">
-          {/* LEFT CLUSTER: Track + Play-to-Advance */}
-          <div className="flex-none mx-auto">
-            <label className="pill flex items-center gap-2 text-sm">
-              <span className="text-slate-300">Track</span>
-              <select
-                className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-                value={trackIndex ?? 0}
-                onChange={(e) => onTrackIndex(+e.target.value)}
-                disabled={!isLoaded}
-              >
-                {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
-              </select>
-              <button
-                type="button"
-                onClick={() => onWaitMode(!waitMode)}
-                className={
-                  "ml-1 px-3 py-1 rounded border text-xs " +
-                  (waitMode ? "border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border-slate-600 text-slate-200")
-                }
-                title="Require holding each correct note before continuing"
-              >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
-            </label>
-          </div>
-
-          {/* CENTER CLUSTER: Segmented transport */}
-          <div className="justify-self-center">
-            <div className="transport" role="group" aria-label="Transport">
-              <button
-                className="tbtn"
-                onClick={onGoStart}
-                disabled={!isLoaded}
-                title="Back to start (⏮)"
-                aria-label="Back to start"
-              >⏮</button>
-              <button
-                className="tbtn play"
-                onClick={onPlayPause}
-                disabled={!isLoaded}
-                title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"}
-                aria-label={running ? "Pause" : "Play"}
-              >{running ? '⏸️' : '▶'}</button>
-              <button
-                className="tbtn"
-                onClick={onStop}
-                disabled={!isLoaded}
-                title="Stop (⏹) — pause and go to start"
-                aria-label="Stop"
-              >⏹</button>
+              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
+              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
             </div>
           </div>
 
-          {/* RIGHT CLUSTER: Tempo + Transposition + Upload + Stats/Mic */}
-          <div className="flex items-center gap-2 justify-end flex-1 basis-0 min-w-[320px] flex-wrap">
-            <label className="pill flex items-center gap-2 text-sm">
-              <span className="text-slate-300">Tempo</span>
-              <input
-                className="w-40"
-                type="range" min="40" max="200" step="1"
-                value={bpm}
-                onChange={(e) => onBpm(+e.target.value)}
-              />
-              <span className="w-10 text-right">{bpm}</span>
-              <span className="text-slate-400 text-xs ml-1">BPM</span>
-            </label>
+          {/* Upload – always visible */}
+          <div className="col-span-2 flex justify-center">
+            <input
+              className="hidden"
+              id="midiFile"
+              type="file"
+              accept=".mid,.midi,audio/midi"
+              onChange={(e) => onFile(e.target.files?.[0] || null)}
+            />
+            <span className="pill cursor-pointer hover:brightness-110">
+              <label htmlFor="midiFile" className="cursor-pointer">Upload MIDI</label>
+            </span>
+          </div>
 
-            <label className="pill flex items-center gap-2 text-sm">
-              <span className="text-slate-300">Transposition</span>
-              <select
-                className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-                value={transposeSemis}
-                onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
-                title="Shift mic (concert) to written pitch"
-              >
-                <option value={0}>C (0)</option>
-                <option value={2}>B♭ (+2)</option>
-                <option value={7}>F (+7)</option>
-                <option value={9}>E♭ (+9)</option>
-              </select>
-            </label>
+          {/* Track select */}
+          <label className="pill col-span-2 flex items-center justify-center gap-2 text-sm">
+            <span className="text-slate-300">Track</span>
+            <select
+              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+              value={trackIndex ?? 0}
+              onChange={(e) => onTrackIndex(+e.target.value)}
+              disabled={!isLoaded}
+            >
+              {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
+            </select>
+          </label>
 
-            <label className="text-sm flex items-center gap-2">
-              <input
-                className="hidden"
-                id="midiFile"
-                type="file"
-                accept=".mid,.midi,audio/midi"
-                onChange={(e) => onFile(e.target.files?.[0] || null)}
-              />
-              <span className="pill cursor-pointer hover:brightness-110">
-                <label htmlFor="midiFile" className="cursor-pointer">Upload MIDI</label>
+          {/* Wait & Transpose side-by-side */}
+          <button
+            type="button"
+            onClick={() => onWaitMode(!waitMode)}
+            className={
+              "pill text-xs flex items-center justify-center " +
+              (waitMode ? "border border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border border-slate-600 text-slate-200")
+            }
+            title="Require holding each correct note before continuing"
+          >
+            {waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}
+          </button>
+
+          <label className="pill text-sm flex items-center justify-center gap-2">
+            <span className="text-slate-300">Transposition</span>
+            <select
+              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+              value={transposeSemis}
+              onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
+              title="Shift mic (concert) to written pitch"
+            >
+              <option value={0}>C (0)</option>
+              <option value={2}>B♭ (+2)</option>
+              <option value={7}>F (+7)</option>
+              <option value={9}>E♭ (+9)</option>
+            </select>
+          </label>
+
+          {/* Tempo slider – full width */}
+          <label className="pill col-span-2 flex items-center gap-2 text-sm">
+            <span className="text-slate-300">Tempo</span>
+            <input className="flex-1" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
+            <span className="w-10 text-right">{bpm}</span>
+            <span className="text-slate-400 text-xs ml-1">BPM</span>
+          </label>
+
+          {/* Stats / Mic – centered fine print */}
+          <div className="col-span-2 text-center space-y-1">
+            <div className="text-xs text-slate-300">
+              Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
+                <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
               </span>
-            </label>
-
-            <div className="text-xs text-slate-300 ml-1">
-              <span className="mr-3">
-                Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
-                  <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
-                </span>
-              </span>
-              <span className="mr-3">
+              <span className="mx-3">
                 Miss: <span className="font-semibold text-rose-400">
                   <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.missTime.toFixed(2)}</span>s
                 </span>
               </span>
-              <span>
-                Acc: <span className="font-semibold">
-                  <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
-                    {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
-                  </span>%
-                </span>
+              Acc: <span className="font-semibold">
+                <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
+                  {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
+                </span>%
               </span>
             </div>
-
             <div className="text-xs text-slate-400 font-mono tabular-nums">
-              <span className="inline-block w-[18ch]">
-                {micEnabled
-                  ? (micNote
-                    ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢`
-                    : 'Mic: listening…')
-                  : 'Mic: off'}
-              </span>
+              {micEnabled
+                ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
+                : 'Mic: off'}
             </div>
           </div>
         </div>
-      );
-    }
+      </div>
+    );
+  }
+
+  // Desktop (unchanged layout)
+  return (
+    <div className="hud w-full">
+      {/* LEFT CLUSTER */}
+      <div className="flex-none mx-auto">
+        <label className="pill flex items-center gap-2 text-sm">
+          <span className="text-slate-300">Track</span>
+          <select
+            className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+            value={trackIndex ?? 0}
+            onChange={(e) => onTrackIndex(+e.target.value)}
+            disabled={!isLoaded}
+          >
+            {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={() => onWaitMode(!waitMode)}
+            className={
+              "ml-1 px-3 py-1 rounded border text-xs " +
+              (waitMode ? "border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border-slate-600 text-slate-200")
+            }
+            title="Require holding each correct note before continuing"
+          >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
+        </label>
+      </div>
+
+      {/* CENTER CLUSTER */}
+      <div className="justify-self-center">
+        <div className="transport" role="group" aria-label="Transport">
+          <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
+          <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
+          <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+        </div>
+      </div>
+
+      {/* RIGHT CLUSTER */}
+      <div className="flex items-center gap-2 justify-end flex-1 basis-0 min-w-[320px] flex-wrap">
+        <label className="pill flex items-center gap-2 text-sm">
+          <span className="text-slate-300">Tempo</span>
+          <input className="w-40" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
+          <span className="w-10 text-right">{bpm}</span>
+          <span className="text-slate-400 text-xs ml-1">BPM</span>
+        </label>
+
+        <label className="pill flex items-center gap-2 text-sm">
+          <span className="text-slate-300">Transposition</span>
+          <select
+            className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+            value={transposeSemis}
+            onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
+            title="Shift mic (concert) to written pitch"
+          >
+            <option value={0}>C (0)</option>
+            <option value={2}>B♭ (+2)</option>
+            <option value={7}>F (+7)</option>
+            <option value={9}>E♭ (+9)</option>
+          </select>
+        </label>
+
+        <label className="text-sm flex items-center gap-2">
+          <input className="hidden" id="midiFile" type="file" accept=".mid,.midi,audio/midi" onChange={(e) => onFile(e.target.files?.[0] || null)} />
+          <span className="pill cursor-pointer hover:brightness-110">
+            <label htmlFor="midiFile" className="cursor-pointer">Upload MIDI</label>
+          </span>
+        </label>
+
+        <div className="text-xs text-slate-300 ml-1">
+          <span className="mr-3">
+            Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
+              <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
+            </span>
+          </span>
+          <span className="mr-3">
+            Miss: <span className="font-semibold text-rose-400">
+              <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.missTime.toFixed(2)}</span>s
+            </span>
+          </span>
+          <span>
+            Acc: <span className="font-semibold">
+              <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
+                {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
+              </span>%
+            </span>
+          </span>
+        </div>
+
+        <div className="text-xs text-slate-400 font-mono tabular-nums">
+          <span className="inline-block w-[18ch]">
+            {micEnabled
+              ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
+              : 'Mic: off'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
     /******************************
@@ -2032,6 +2110,8 @@
       const [stats, setStats] = useState({ hitTime: 0, missTime: 0 });
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
       const pressedMaskRef = useRef(0);
+
+      const showHighway = !isMobile || (running && notes.length > 0);
 
       // Persist whenever any user-facing setting changes
       useEffect(() => {
@@ -2738,40 +2818,46 @@
           </section>
 
           {/* Highway */}
-          <section id="highway" className="flex-1 px-3 py-3">
-            <div
-              ref={highwayBoxRef}
-              className="grid-drift relative w-full h-full min-h-[200px] sm:min-h-[260px] overflow-hidden"
-              style={{
-                '--beat': (60 / (bpm || 120)) + 's',
-                '--cell': Math.round(
-                  Math.max(28, Math.min(64, 52 - (bpm - 120) * 0.10))
-                ) + 'px'
-              }}
-            >
-              <NoteHighway
-                laneEvents={laneEvents}
-                keyStateMask={pressedMask}
-                width={canvasSize.w || 800}
-                height={canvasSize.h || highwayHeight}
-                lookahead={lookahead}
-                onHitJudgement={onHitJudgement}
-                running={running}
-                currentTicks={transportTicks}
-                bpm={bpm}
-                ppq={midiMeta.ppq || 480}
-                onTouchMaskChange={setTouchMask}
-              />
-              {/* Hit line overlay (for visual crispness) */}
-              <div className="hitline" style={{ top: ((canvasSize.h || highwayHeight) * 0.88) + 'px' }}></div>
-              {/* Lane labels */}
-              <div className="absolute left-0 right-0 bottom-1 flex justify-center gap-12 text-xs text-slate-300">
-                <div style={{ color: 'var(--laneA)' }}>Valve 1</div>
-                <div style={{ color: 'var(--laneB)' }}>Valve 2</div>
-                <div style={{ color: 'var(--laneC)' }}>Valve 3</div>
+          {showHighway ? (
+            <section id="highway" className="flex-1 px-3 py-3">
+              <div
+                ref={highwayBoxRef}
+                className="grid-drift relative w-full h-full min-h-[200px] sm:min-h-[260px] overflow-hidden"
+                style={{
+                  '--beat': (60 / (bpm || 120)) + 's',
+                  '--cell': Math.round(Math.max(28, Math.min(64, 52 - (bpm - 120) * 0.10))) + 'px'
+                }}
+              >
+                <NoteHighway
+                  laneEvents={laneEvents}
+                  keyStateMask={pressedMask}
+                  width={canvasSize.w || 800}
+                  height={canvasSize.h || 320}
+                  lookahead={lookahead}
+                  onHitJudgement={onHitJudgement}
+                  running={running}
+                  currentTicks={transportTicks}
+                  bpm={bpm}
+                  ppq={midiMeta.ppq || 480}
+                  onTouchMaskChange={setTouchMask}
+                />
+                <div className="hitline" style={{ top: ((canvasSize.h || 320) * 0.88) + 'px' }} />
+                <div className="absolute left-0 right-0 bottom-1 flex justify-center gap-12 text-xs text-slate-300">
+                  <div style={{ color: 'var(--laneA)' }}>Valve 1</div>
+                  <div style={{ color: 'var(--laneB)' }}>Valve 2</div>
+                  <div style={{ color: 'var(--laneC)' }}>Valve 3</div>
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
+          ) : (
+            // Mobile-only placeholder (saves space before playback)
+            <section className="px-3 py-3 sm:hidden">
+              <div className="w-full rounded-md border border-slate-700/60 bg-slate-900/40 p-4 text-center text-slate-300">
+                Game will start when press <span className="font-semibold">Play</span>.
+                <div className="text-xs text-slate-400 mt-1">Upload a MIDI and pick a track first.</div>
+              </div>
+            </section>
+          )}
 
           {/* Bottom controls */}
           <footer className="px-3 pb-3">
@@ -2794,6 +2880,7 @@
               onWaitMode={setWaitMode}
               transposeSemis={transposeSemis}
               onTransposeSemis={setTransposeSemis}
+              isMobile={isMobile}
             />
           </footer>
 
