@@ -600,9 +600,12 @@
      * Audio / Transport
      ******************************/
     function useToneSetup() {
-      const synthRef = useRef(null);
+      // Lead (selected track) & Backing (all other tracks)
+      const leadSynthRef = useRef(null);
+      const backingSynthRef = useRef(null);
       const limiterRef = useRef(null);
-      const partRef = useRef(null);
+      const leadPartRef = useRef(null);
+      const backingPartRef = useRef(null);
       const initedRef = useRef(false);
       const readyRef = useRef(false);
 
@@ -610,81 +613,142 @@
         if (initedRef.current) return;
         await Tone.start();               // ensure user-gesture start
         // Build synth chain AFTER gesture to avoid autoplay warnings
-        const synth = new Tone.PolySynth(Tone.Synth, {
+        const leadSynth = new Tone.PolySynth(Tone.Synth, {
           oscillator: { type: 'sawtooth' },
           envelope: { attack: 0.005, decay: 0.2, sustain: 0.15, release: 0.2 },
           volume: -8
         }).toDestination();
         const limiter = new Tone.Limiter(-6).toDestination();
-        synth.connect(limiter);
-        synthRef.current = synth;
+        leadSynth.connect(limiter);
+
+        // Backing: slightly software, mellower timbre
+        const backingSynth = new Tone.PolySynth(Tone.Synth, {
+          oscillator: { type: 'triangle' },
+          envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.3 },
+          volume: -12
+        }).toDestination();
+        backingSynth.connect(limiter);
+
+        leadSynthRef.current = leadSynth;
+        backingSynthRef.current = backingSynth;
         limiterRef.current = limiter;
         initedRef.current = true;
         readyRef.current = true;
       }, []);
 
       const setBackingMuted = useCallback((muted) => {
-        // PolySynth doesn't have a reliable '.mute'; use volume slam instead.
         try {
-          if (synthRef.current) {
-            synthRef.current.volume.value = muted ? -120 : -8;
-            if (muted) synthRef.current.releaseAll?.();
+          if (leadSynthRef.current) {
+            leadSynthRef.current.volume.value = muted ? -120 : -8;
+            if (muted) leadSynthRef.current.releaseAll?.();
+          }
+          if (backingSynthRef.current) {
+            backingSynthRef.current.volume.value = muted ? -120 : -12;
+            if (muted) backingSynthRef.current.releaseAll?.();
           }
         } catch { }
       }, []);
 
-
-      const schedulePart = useCallback(async (toneNotes, tickScale = 1) => {
+      const scheduleLeadPart = useCallback(async (toneNotes, tickScale = 1) => {
         if (!toneNotes?.length) return;
         await initAudio();
 
-        if (partRef.current) {
-          try { partRef.current.dispose(); } catch { }
-          partRef.current = null;
+        if (leadPartRef.current) {
+          try { leadPartRef.current.dispose(); } catch { }
+          leadPartRef.current = null;
         }
-        const synth = synthRef.current;
+        const synth = leadSynthRef.current;
         const part = new Tone.Part((time, ev) => {
           if (ev.name && ev.duration) {
-            synth.triggerAttackRelease(ev.name, ev.duration, time);
+            synth.triggerAttackRelease(ev.name, ev.duration, time, ev.velocity ?? 0.8);
           } else if (ev.midi) {
-            synth.triggerAttackRelease(midiToFreq(ev.midi), ev.duration, time);
+            synth.triggerAttackRelease(midiToFreq(ev.midi), ev.duration, time, ev.velocity ?? 0.8);
           }
         }, toneNotes.map(n => ({
           // schedule in ticks (scaled from MIDI PPQ into Transport PPQ)
           time: Tone.Ticks((n.ticks || 0) * tickScale),
           name: n.name,
           duration: Tone.Ticks((n.durationTicks || 0) * tickScale),
-          midi: n.midi
+          midi: n.midi,
+          velocity: n.velocity
         })));
         part.loop = false;
         part.start(0);
-        partRef.current = part;
+        leadPartRef.current = part;
       }, [initAudio]);
 
-      const clearPart = useCallback(() => {
-        if (partRef.current) {
-          try { partRef.current.dispose(); } catch { }
-          partRef.current = null;
+      const scheduleBackingPart = useCallback(async (toneNotes, tickScale = 1) => {
+        if (!toneNotes?.length) return;
+        await initAudio();
+        if (backingPartRef.current) {
+          try { backingPartRef.current.dispose(); } catch { }
+          backingPartRef.current = null;
+        }
+        const synth = backingSynthRef.current;
+        const part = new Tone.Part((time, ev) => {
+          if (ev.name && ev.duration) {
+            synth.triggerAttackRelease(ev.name, ev.duration, time, ev.velocity ?? 0.6);
+          } else if (ev.midi) {
+            synth.triggerAttackRelease(midiToFreq(ev.midi), ev.duration, time, ev.velocity ?? 0.6);
+          }
+        }, toneNotes.map(n => ({
+          time: Tone.Ticks(Math.max(0, (n.ticks || 0)) * tickScale),
+          name: n.name,
+          duration: Tone.Ticks(Math.max(1, (n.durationTicks || 1)) * tickScale),
+          midi: n.midi,
+          velocity: (n.velocity ?? 0.6) * 0.9
+        })));
+        part.loop = false;
+        part.start(0);
+        backingPartRef.current = part;
+      }, [initAudio]);
+
+      const clearLeadPart = useCallback(() => {
+        if (leadPartRef.current) {
+          try { leadPartRef.current.dispose(); } catch { }
+          leadPartRef.current = null;
+        }
+      }, []);
+
+      const clearBackingPart = useCallback(() => {
+        if (backingPartRef.current) {
+          try { backingPartRef.current.dispose(); } catch { }
+          backingPartRef.current = null;
         }
       }, []);
 
 
+
       const stopAll = useCallback(() => {
         try {
-          synthRef.current?.releaseAll?.();
+          leadSynthRef.current?.releaseAll?.();
+          backingSynthRef.current?.releaseAll?.();
         } catch { }
       }, []);
 
 
       useEffect(() => {
         return () => {
-          try { partRef.current?.dispose(); } catch { }
-          try { synthRef.current?.dispose(); limiterRef.current?.dispose(); } catch { }
+          try { leadPartRef.current?.dispose(); } catch { }
+          try { backingPartRef.current?.dispose(); } catch { }
+          try {
+            leadSynthRef.current?.dispose();
+            backingSynthRef.current?.dispose();
+            limiterRef.current?.dispose();
+          } catch { }
         };
       }, []);
 
-      return { schedulePart, clearPart, initAudio, readyRef, stopAll, setBackingMuted };
-
+      return {
+        scheduleLeadPart,
+        scheduleBackingPart,
+        clearLeadPart,
+        clearBackingPart,
+        initAudio,
+        readyRef,
+        stopAll,
+        setBackingMuted
+      };
     }
 
     /******************************
@@ -2250,7 +2314,16 @@
       }, [micNoteRaw, transposeSemis]);
       useEffect(() => { window.__lastMicNoteWritten = micNote || null; }, [micNote]);
 
-      const { schedulePart, clearPart, initAudio, readyRef, stopAll, setBackingMuted } = useToneSetup();
+      const {
+        scheduleLeadPart,
+        scheduleBackingPart,
+        clearLeadPart,
+        clearBackingPart,
+        initAudio,
+        readyRef,
+        stopAll,
+        setBackingMuted
+      } = useToneSetup();
 
       // Stable sizing via ResizeObserver (prevents layout creep)
       useEffect(() => {
@@ -2310,9 +2383,17 @@
 
         const selectedNotes = playableTracks[0]?.notes?.map(n => ({ ...n })) || [];
         const t0 = selectedNotes.length ? selectedNotes[0].time : 0;
-        const t0Ticks = selectedNotes.length ? selectedNotes[0].ticks : 0;
-        selectedNotes.forEach(n => { n.time -= t0; n.ticks -= t0Ticks; });
+        const t0Ticks = selectedNotes.length ? (selectedNotes[0].ticks || 0) : 0;
+        selectedNotes.forEach(n => { n.time -= t0; n.ticks = (n.ticks || 0) - t0Ticks; });
         setNotes(selectedNotes);
+
+        // Build backing = all other tracks, aligned to selected's start, clamp to >= 0
+        const backingRaw = playableTracks.slice(1).flatMap(t => t.notes || []);
+        const backingNotes = backingRaw.map(n => ({
+          ...n,
+          time: Math.max(0, n.time - t0),
+          ticks: Math.max(0, (n.ticks || 0) - t0Ticks)
+        }));
 
         Tone.Transport.cancel();
         Tone.Transport.bpm.value = bpm0;
@@ -2321,7 +2402,8 @@
         const transportPPQ = Tone.Transport.PPQ || 192;
         const midiPPQ = midi.header.ppq || 480;
         const scaleToTransport = transportPPQ / midiPPQ;
-        schedulePart(selectedNotes, scaleToTransport);
+        scheduleLeadPart(selectedNotes, scaleToTransport);
+        scheduleBackingPart(backingNotes, scaleToTransport);
 
         const events = buildLaneEvents(selectedNotes, bpm0, noteNameToMask, lookahead);
         setLaneEvents(events);
@@ -2371,10 +2453,23 @@
         const transportPPQ = Tone.Transport.PPQ || 192;
         const midiPPQ = midiMeta.ppq || 480;
         const scaleToTransport = transportPPQ / midiPPQ;
+        // build backing = all other tracks, aligned to selected
+        const backingRaw = midiMeta.tracks
+          .filter((_, i) => i !== (trackIndex || 0))
+          .flatMap(tr => tr.notes || []);
+        const t0Ticks = n.length ? (n[0].ticks || 0) : 0;
+        const t0Time = n.length ? n[0].time : 0;
+        const backingNotes = backingRaw.map(b => ({
+          ...b,
+          time: Math.max(0, b.time - t0Time),
+          ticks: Math.max(0, (b.ticks || 0) - t0Ticks)
+        }));
         if (!waitMode) {
-          schedulePart(n, scaleToTransport);
+          scheduleLeadPart(n, scaleToTransport);
+          scheduleBackingPart(backingNotes, scaleToTransport);
         } else {
-          clearPart();
+          clearLeadPart();
+          clearBackingPart();
           try { Tone.Transport.stop(); } catch { }
         }
         const events = buildLaneEvents(n, bpm, noteNameToMask, lookahead);
@@ -2659,20 +2754,32 @@
           }
         }
 
-        // If user turns waitMode OFF mid-run, clear the gate and carry on normally.
+        // If user turns waitMode OFF mid-run, re-schedule both lead and backing.
         if (!waitMode) {
           // Re-schedule current notes for audible playback again.
           const transportPPQ = Tone.Transport.PPQ || 192;
           const midiPPQ = midiMeta.ppq || 480;
           const scaleToTransport = transportPPQ / midiPPQ;
-          schedulePart(notes, scaleToTransport);
+          // rebuild backing for current track selection
+          const t0Ticks = notes.length ? (notes[0].ticks || 0) : 0;
+          const t0Time = notes.length ? notes[0].time : 0;
+          const backingRaw = midiMeta.tracks
+            .filter((_, i) => i !== (trackIndex || 0))
+            .flatMap(tr => tr.notes || []);
+          const backingNotes = backingRaw.map(b => ({
+            ...b,
+            time: Math.max(0, b.time - t0Time),
+            ticks: Math.max(0, (b.ticks || 0) - t0Ticks)
+          }));
+          scheduleLeadPart(notes, scaleToTransport);
+          scheduleBackingPart(backingNotes, scaleToTransport);
 
           if (running && gateRef.current.active) {
             gateRef.current = { active: false, noteIndex: gateRef.current.noteIndex };
             try { Tone.Transport.start('+0.02'); } catch { }
           }
         }
-      }, [waitMode, running, notes, midiMeta.ppq, readyRef, stopAll, setBackingMuted, schedulePart, clearPart]);
+      }, [waitMode, running, notes, midiMeta.ppq, readyRef, stopAll, setBackingMuted, scheduleLeadPart, scheduleBackingPart, clearLeadPart, clearBackingPart, trackIndex]);
 
 
       useEffect(() => {
