@@ -1246,13 +1246,17 @@
       keyStateMask,
       width,
       height,
-      lookahead = 3.5, // seconds from top to hit line
-      onHitJudgement, // (evt, ok, errorMs)
+      lookahead = 3.5,
+      onHitJudgement,
       running,
-      currentTicks,    // live transport ticks (tempo-scaled)
+      currentTicks, 
       bpm,
       ppq = 480,
-      onTouchMaskChange
+      onTouchMaskChange,
+      micNote,
+      micEnabled,
+      tunerTargetMidi,
+      tunerToleranceCents = 15
     }) {
 
       const canvasRef = useRef(null);
@@ -1261,15 +1265,28 @@
       useEffect(() => { tickRef.current = currentTicks || 0; }, [currentTicks]);
       const activePointersRef = useRef(new Map());
 
-      const hitYRatio = 0.88;              // the hit line y position (as a proportion of height)
-      const vanishYRatio = 0.18;           // where things originate (near top)
+      const hitYRatio = 0.88;
+      const vanishYRatio = 0.18;
+      const tunerYRatio = (hitYRatio + vanishYRatio) * 0.5;
       const isNarrow = width < 420;
-      const totalWidthFrac = isNarrow ? 0.70 : 0.80;   // 70% on phones, 80% otherwise
+      const totalWidthFrac = isNarrow ? 0.70 : 0.80;
       const laneGapAtHit = isNarrow ? Math.max(12, Math.round(width * 0.04)) : 28;
-      const minLaneWidthFar = 0;           // lane width "in the distance!"
-      const gamma = 1.15;                  // easing for depth -> screen mapping
+      const minLaneWidthFar = 0;
+      const gamma = 1.15;
 
       const [frame, setFrame] = useState(0); // force updates on resize
+
+       const micNoteRef = useRef(null);
+       const targetMidiRef = useRef(null);
+       const micEnabledRef = useRef(false);
+       useEffect(() => { micNoteRef.current = micNote; }, [micNote]);
+       useEffect(() => { targetMidiRef.current = tunerTargetMidi; }, [tunerTargetMidi]);
+       useEffect(() => { micEnabledRef.current = !!micEnabled; }, [micEnabled]);
+
+
+      // Smooth visibility for the tuner (fade in/out based on mic activity & target note)
+      const tunerAlphaRef = useRef(0);
+      const lastVoiceSecRef = useRef(0);
 
       // Resize canvas to DPR
       const resizeCanvas = useCallback(() => {
@@ -1600,11 +1617,156 @@
           ctx.shadowBlur = 0;
         }
 
+        function drawTuner() {
+          if (!micEnabledRef.current) return;
+          // Show the tuner whenever we have a target note.
+          const haveTarget = Number.isFinite(targetMidiRef.current);
+          const nowSec = performance.now() / 1000;
+          if (micNoteRef.current?.freq > 0) lastVoiceSecRef.current = nowSec;
+          const voiceActive = (nowSec - lastVoiceSecRef.current) < 0.18; // still tracked for subtle styling if desired
+          const shouldShow = haveTarget;
+
+          // smooth alpha toward target
+          const targetA = shouldShow ? 1 : 0;
+          // quick in, gentle out
+          const k = shouldShow ? 0.35 : 0.15; // lerp factor per frame
+          tunerAlphaRef.current += (targetA - tunerAlphaRef.current) * k;
+          if (tunerAlphaRef.current < 0.03) return; // effectively invisible → skip draw
+
+          if (!haveTarget) return;
+          const targetMidi = targetMidiRef.current;
+          const targetFreq = midiToFreq(targetMidi);
+          const hasMic = !!(micNoteRef.current && micNoteRef.current.freq > 0);
+          const f = hasMic ? micNoteRef.current.freq : null;
+
+          // error against *this* octave target
+          const diff = hasMic ? (1200 * Math.log2(f / targetFreq)) : null; // cents (+: sharp/high, –: flat/low)
+          const tol = tunerToleranceCents || 15;
+
+          // If the player is an octave off but otherwise in tune, show a little “±8”
+          const kOct = Math.round(Math.log2(f / targetFreq)); // nearest octave offset
+          const diffOct = 1200 * Math.log2((f / targetFreq) / Math.pow(2, kOct || 0));
+          const octaveOff = (kOct !== 0) && (Math.abs(diffOct) <= tol);
+
+          const inTune = (diff !== null) && (Math.abs(diff) <= tol);
+          const cx = Math.round(width / 2);
+          const centerY = Math.round(height * tunerYRatio);  // middle of highway
+
+          ctx.save();
+          ctx.globalAlpha = tunerAlphaRef.current;
+          ctx.translate(cx, centerY);
+
+          // Helper to draw a filled chevron (triangle) pointing up/down
+          const drawChevron = (x, y, size, up) => {
+            ctx.beginPath();
+            if (up) {
+              ctx.moveTo(x - size, y + size * 0.9);
+              ctx.lineTo(x,         y - size * 0.9);
+              ctx.lineTo(x + size, y + size * 0.9);
+            } else {
+              ctx.moveTo(x - size, y - size * 0.9);
+              ctx.lineTo(x,         y + size * 0.9);
+              ctx.lineTo(x + size, y - size * 0.9);
+            }
+            ctx.closePath();
+            ctx.fill();
+          };
+
+          if (!hasMic) {
+             const r = (width < 420 ? 16 : 22);
+             // dark fill behind ring for legibility on bright tiles
+             ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+             ctx.fillStyle = 'rgba(2,6,23,0.55)'; ctx.fill();
+             // outer dark stroke then inner light stroke (dual stroke)
+             ctx.lineWidth = 4;
+             ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.stroke();
+             ctx.lineWidth = 2;
+             ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
+            // tiny target label (e.g., "A#4")
+            ctx.font = (width < 420 ? '11px' : '12px') + ' ui-sans-serif, system-ui';
+            ctx.fillStyle = 'rgba(203,213,225,0.9)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            try {
+              const name = midiToNoteName(targetMidi);
+              ctx.fillText(name, 0, r + 4);
+            } catch {}
+            ctx.restore();
+            return;
+          }
+
+          if (inTune) {
+             // Green “you’re on it” ring — larger + clearer
+             const r = (width < 420 ? 16 : 22);
+             ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+             ctx.fillStyle = 'rgba(2,6,23,0.55)'; ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(34,197,94,1)'; // emerald-500
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            // soft glow
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.shadowColor = 'rgba(34,197,94,0.85)';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 7, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(34,197,94,0.55)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Optional tiny octave badge if “in tune” but ±1 octave
+            if (octaveOff) {
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.font = (width < 420 ? '10px' : '11px') + ' ui-sans-serif, system-ui';
+              ctx.fillStyle = 'rgba(255,255,255,0.85)';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(kOct > 0 ? '+8' : '–8', r + 10, 0);
+            }
+            ctx.restore();
+            return;
+          }
+
+          // Off target: single directional chevron; opacity/size scale with error magnitude
+          const abs = Math.abs(diff);
+          const wrong = clamp(abs / 100, 0, 1);         // 0..1 over ~100¢
+          const size = (width < 420 ? 10 : 12) + 14 * wrong;
+          const alpha = 0.35 + 0.65 * wrong;
+          const goUp = diff < 0; // mic lower → raise pitch
+
+           // Bigger, high-contrast ring as anchor (dark fill + dual stroke — fixes #1)
+           const r = (width < 420 ? 16 : 22);
+           ctx.globalAlpha = 0.9;
+           ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+           ctx.fillStyle = 'rgba(2,6,23,0.55)'; ctx.fill();
+           ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.stroke();
+           ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.stroke();
+
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = 'rgba(148,221,255,0.95)'; // lane glow hue
+          drawChevron(0, 0, size, goUp);
+
+          // If exactly in-tune but wrong octave, show tiny ±8
+          if (octaveOff) {
+            ctx.globalAlpha = 0.9;
+            ctx.font = (width < 420 ? '10px' : '11px') + ' ui-sans-serif, system-ui';
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(kOct > 0 ? '+8' : '–8', (width < 420 ? 24 : 28), 0);
+          }
+          ctx.restore();
+        }
+
+
         let view = { running: true };
         function loop() {
           if (!view.running) return;
           drawBackground();
           drawNotes();
+          drawTuner();
           rafRef.current = requestAnimationFrame(loop);
         }
         view.running = true;
@@ -3050,6 +3212,17 @@
       // Current container sizes
       const scoreHeight = isMobile ? 160 : 220;
       const highwayHeight = 320;
+
+      const expectedMidiNow = React.useMemo(() => {
+        const t = transportTicks || 0;
+        for (let i = 0; i < notes.length; i++) {
+          const s = notes[i].ticks || 0;
+          const e = s + (notes[i].durationTicks || 0);
+          if (s <= t && t < e) return (Number.isFinite(notes[i].midi) ? notes[i].midi : noteNameToMidi(notes[i].name));
+        }
+        return null;
+      }, [transportTicks, notes]);
+
       const scoreOnly = showScore && !showHighway;
 
       const pulseAmpRef = useRef(0);
@@ -3172,6 +3345,11 @@
                     bpm={bpm}
                     ppq={midiMeta.ppq || 480}
                     onTouchMaskChange={setTouchMask}
+                    micNote={micNote}
+                    micEnabled={micEnabled}
+                    tunerTargetMidi={expectedMidiNow}
+                    tunerToleranceCents={15}
+
                   />
                   <div className="hitline" style={{ top: (canvasSize.h * 0.88) + 'px' }} />
                   <div className="absolute left-0 right-0 bottom-1 flex justify-center gap-12 text-xs text-slate-300">
