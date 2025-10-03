@@ -363,7 +363,9 @@
       micEnabled: false,
       expertMode: false,
       waitMode: false,
-      transposeSemis: 2 // B♭
+      transposeSemis: 2, // B♭
+      showScore: true,
+      showHighway: true
     };
     function loadSettings() {
       try {
@@ -2022,6 +2024,8 @@
       micEnabled, setMicEnabled,
       expertMode, setExpertMode,
       transposeSemis, setTransposeSemis,
+      showScore, setShowScore,
+      showHighway, setShowHighway,
       onResetSettings = () => { },
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
@@ -2081,6 +2085,26 @@
                   <button className="text-xs underline text-slate-300" onClick={() => setKeyMap({ ...defaultKeyMap })}>Reset to A/S/D</button>
                 </div>
               </div>
+            </section>
+
+            <section className="mb-6">
+              <h3 className="font-semibold mb-2">Display</h3>
+              <label className="flex items-center gap-2 text-sm mb-2">
+                <input
+                  type="checkbox"
+                  checked={showScore}
+                  onChange={(e) => setShowScore(e.target.checked)}
+                />
+                <span>Show score (staff notation)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showHighway}
+                  onChange={(e) => setShowHighway(e.target.checked)}
+                />
+                <span>Show highway (valve lanes)</span>
+              </label>
             </section>
 
             <section className="mb-6">
@@ -2271,6 +2295,14 @@
       const [waitMode, setWaitMode] = useState(initialSettings.waitMode);
       const [transposeSemis, setTransposeSemis] = useState(initialSettings.transposeSemis);
 
+      const [showScore, setShowScore] = useState(
+        typeof initialSettings.showScore === 'boolean' ? initialSettings.showScore : true
+      );
+      const [showHighwaySetting, setShowHighway] = useState(
+        typeof initialSettings.showHighway === 'boolean' ? initialSettings.showHighway : true
+      );
+
+
       const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
       const [isMobile, setIsMobile] = useState(window.matchMedia('(max-width: 640px)').matches);
       const [pickerOpen, setPickerOpen] = useState(false);
@@ -2299,16 +2331,23 @@
       const highwayMeasureRef = useRef(null);
       const highwayPulseRef = useRef(null);
 
+      const scoreMeasureRef = useRef(null);
+      const [scoreSize, setScoreSize] = useState({ w: 0, h: 0 });
+
       const [stats, setStats] = useState({ hitTime: 0, missTime: 0 });
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
       const pressedMaskRef = useRef(0);
 
-      const showHighway = !isMobile || (notes.length > 0 && (running || waitMode));
+      const showHighwayAuto = !isMobile || (notes.length > 0 && (running || waitMode));
+      const showHighway = showHighwaySetting && showHighwayAuto;
 
       // Persist whenever any user-facing setting changes
       useEffect(() => {
-        persistSettings({ keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis });
-      }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis]);
+        persistSettings({
+          keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis,
+          showScore, showHighway: showHighwaySetting
+        });
+      }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis, showScore, showHighwaySetting]);
 
       // Combine keyboard + touch into effective pressed mask
       useEffect(() => {
@@ -2336,6 +2375,8 @@
         setExpertMode(DEFAULT_SETTINGS.expertMode);
         setWaitMode(DEFAULT_SETTINGS.waitMode);
         setTransposeSemis(DEFAULT_SETTINGS.transposeSemis);
+        setShowScore(DEFAULT_SETTINGS.showScore);
+        setShowHighway(DEFAULT_SETTINGS.showHighway);
       }, []);
 
       useEffect(() => { pressedMaskRef.current = pressedMask; }, [pressedMask]);
@@ -2382,6 +2423,24 @@
         ro.observe(el);
         return () => ro.disconnect();
       }, [showHighway]);
+
+      // Resize observer for the Score area when it's the only view (fill height)
+      useEffect(() => {
+        const el = scoreMeasureRef.current;
+        if (!el) return;
+        const ro = new ResizeObserver(entries => {
+          const r = entries[0].contentRect;
+          setScoreSize({ w: Math.round(r.width), h: Math.round(r.height) });
+        });
+        // seed and observe
+        const r0 = el.getBoundingClientRect?.();
+        if (r0?.width && r0?.height) {
+          setScoreSize({ w: Math.round(r0.width), h: Math.round(r0.height) });
+        }
+        ro.observe(el);
+        return () => ro.disconnect();
+      }, []);
+
 
       function fixUtf8Mojibake(s) {
         try {
@@ -2991,6 +3050,7 @@
       // Current container sizes
       const scoreHeight = isMobile ? 160 : 220;
       const highwayHeight = 320;
+      const scoreOnly = showScore && !showHighway;
 
       const pulseAmpRef = useRef(0);
       useEffect(() => {
@@ -3052,27 +3112,41 @@
             </div>
           </header>
 
-          {/* Score area */}
-          <section className="px-3 pt-3">
-            <div className="w-full" style={{ height: scoreHeight + 'px' }}>
-              <ScoreDisplay
-                notes={notes}
-                bpm={bpm}
-                timeSig={timeSig}
-                ppq={midiMeta.ppq || 480}
-                currentTicks={transportTicks}
-                running={running}
-                width={document.body.clientWidth - 24}
-                height={scoreHeight}
-                measuresPerRow={2}
-                onSeekTicks={handleSeekTicks}
-                micEnabled={micEnabled}
-                micNote={micNote}
-                expertMode={expertMode}
-                toleranceCents={35}
-              />
-            </div>
-          </section>
+          {/* Score area (toggleable) */}
+          {showScore && (
+            <section className={scoreOnly ? "flex-1 px-3 pt-3 min-h-0" : "px-3 pt-3"}>
+              <div
+                ref={scoreOnly ? scoreMeasureRef : null}
+                className={scoreOnly ? "w-full h-full min-h-0" : "w-full"}
+                style={scoreOnly ? undefined : { height: scoreHeight + 'px' }}
+              >
+                <ScoreDisplay
+                  notes={notes}
+                  bpm={bpm}
+                  timeSig={timeSig}
+                  ppq={midiMeta.ppq || 480}
+                  currentTicks={transportTicks}
+                  running={running}
+                  width={
+                    scoreOnly
+                      ? Math.max(1, (scoreSize.w || (document.body.clientWidth - 24)))
+                      : (document.body.clientWidth - 24)
+                  }
+                  height={
+                    scoreOnly
+                      ? Math.max(1, (scoreSize.h || scoreHeight))
+                      : scoreHeight
+                  }
+                  measuresPerRow={2}
+                  onSeekTicks={handleSeekTicks}
+                  micEnabled={micEnabled}
+                  micNote={micNote}
+                  expertMode={expertMode}
+                  toleranceCents={35}
+                />
+              </div>
+            </section>
+          )}
 
           {/* Highway */}
           {showHighway ? (
@@ -3109,15 +3183,17 @@
               </div>
             </section>
           ) : (
-            // Mobile-only placeholder (saves space before playback)
-            <section className="px-3 py-3 sm:hidden">
-              <div className="w-full rounded-md border border-slate-700/60 bg-slate-900/40 p-4 text-center text-slate-300">
-                Game will start when you press <span className="font-semibold">Play</span>.
-                <div className="text-xs text-slate-400 mt-1">
-                  Choose a song and pick a track first{waitMode ? ', or turn off Play-to-Advance.' : '.'}
+            // Show the mobile placeholder only if the user hasn't hidden the highway
+            showHighwaySetting && (
+              <section className="px-3 py-3 sm:hidden">
+                <div className="w-full rounded-md border border-slate-700/60 bg-slate-900/40 p-4 text-center text-slate-300">
+                  Game will start when you press <span className="font-semibold">Play</span>.
+                  <div className="text-xs text-slate-400 mt-1">
+                    Choose a song and pick a track first{waitMode ? ', or turn off Play-to-Advance.' : '.'}
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            )
           )}
 
           {/* Bottom controls */}
@@ -3160,6 +3236,10 @@
             setExpertMode={setExpertMode}
             transposeSemis={transposeSemis}
             setTransposeSemis={setTransposeSemis}
+            showScore={showScore}
+            setShowScore={setShowScore}
+            showHighway={showHighwaySetting}
+            setShowHighway={setShowHighway}
             onResetSettings={resetSettings}
           />
 
