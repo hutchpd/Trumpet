@@ -296,11 +296,50 @@
      ******************************/
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+    // Simple debounce to avoid thrashing localStorage
+    const debounce = (fn, ms = 120) => {
+      let t;
+      return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+    };
+
     // Valve bitmask helpers (1=valve1, 2=valve2, 4=valve3)
     const VALVE1 = 1, VALVE2 = 2, VALVE3 = 4;
 
     // Default key mapping
     const defaultKeyMap = { a: VALVE1, s: VALVE2, d: VALVE3 };
+
+    /******************************
+     * Settings persistence (localStorage)
+     ******************************/
+    const SETTINGS_KEY = 'tt:settings:v1';
+    const DEFAULT_SETTINGS = {
+      keyMap: { ...defaultKeyMap },
+      lookahead: 3.5,
+      micEnabled: false,
+      expertMode: false,
+      waitMode: false,
+      transposeSemis: 2 // B♭
+    };
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return { ...DEFAULT_SETTINGS };
+        const parsed = JSON.parse(raw);
+        // Shallow merge with sane defaults; ensure keyMap has all valves
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          keyMap: { ...defaultKeyMap, ...(parsed.keyMap || {}) }
+        };
+      } catch {
+        return { ...DEFAULT_SETTINGS };
+      }
+    }
+    const persistSettings = debounce((settings) => {
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+    }, 150);
+
+
 
     const noteToMask = {
       'F#3': VALVE1 | VALVE2 | VALVE3, 'Gb3': VALVE1 | VALVE2 | VALVE3,
@@ -1670,7 +1709,8 @@
       lookahead, setLookahead,
       micEnabled, setMicEnabled,
       expertMode, setExpertMode,
-      transposeSemis, setTransposeSemis
+      transposeSemis, setTransposeSemis,
+      onResetSettings = () => {},
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
 
@@ -1777,6 +1817,13 @@
 
             <footer className="text-xs text-slate-400">
               <div className="mt-4 pt-3 border-t border-slate-700 space-y-2">
+                <button
+                  type="button"
+                  onClick={onResetSettings}
+                  className="block text-rose-300 hover:text-rose-200"
+                >
+                  Reset saved settings
+                </button>
                 <a
                   href="https://findonsoftware.com/"
                   target="_blank"
@@ -1825,14 +1872,15 @@
      * App
      ******************************/
     function App() {
+      const initialSettings = useRef(loadSettings()).current;
       const [menuOpen, setMenuOpen] = useState(false);
-      const [keyMap, setKeyMap] = useState({ ...defaultKeyMap });
+      const [keyMap, setKeyMap] = useState({ ...initialSettings.keyMap });
       const [pressedMask, setPressedMask] = useState(0);
-      const [lookahead, setLookahead] = useState(3.5);
-      const [micEnabled, setMicEnabled] = useState(false);
-      const [expertMode, setExpertMode] = useState(false);
-      const [waitMode, setWaitMode] = useState(false);
-      const [transposeSemis, setTransposeSemis] = useState(2); // default B♭
+      const [lookahead, setLookahead] = useState(initialSettings.lookahead);
+      const [micEnabled, setMicEnabled] = useState(initialSettings.micEnabled);
+      const [expertMode, setExpertMode] = useState(initialSettings.expertMode);
+      const [waitMode, setWaitMode] = useState(initialSettings.waitMode);
+      const [transposeSemis, setTransposeSemis] = useState(initialSettings.transposeSemis);
 
       const [midiMeta, setMidiMeta] = useState({ title: 'No song loaded', tracks: [] });
       const [trackIndex, setTrackIndex] = useState(0);
@@ -1849,6 +1897,35 @@
       const [stats, setStats] = useState({ hitTime: 0, missTime: 0 });
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
       const pressedMaskRef = useRef(0);
+
+      // Persist whenever any user-facing setting changes
+      useEffect(() => {
+        persistSettings({ keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis });
+      }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis]);
+
+      // Optional nicety: if user previously enabled mic, only auto-enable
+      // when permission is already granted (prevents surprise prompt on load)
+      useEffect(() => {
+        if (!initialSettings.micEnabled) return;
+        if (!navigator.permissions?.query) return;
+        try {
+          navigator.permissions.query({ name: 'microphone' }).then(p => {
+            if (p.state === 'granted') setMicEnabled(true);
+          }).catch(() => {});
+        } catch {}
+      }, []);
+
+      // One-click reset (also clears storage)
+      const resetSettings = useCallback(() => {
+        try { localStorage.removeItem(SETTINGS_KEY); } catch {}
+        setKeyMap({ ...defaultKeyMap });
+        setLookahead(DEFAULT_SETTINGS.lookahead);
+        setMicEnabled(DEFAULT_SETTINGS.micEnabled);
+        setExpertMode(DEFAULT_SETTINGS.expertMode);
+        setWaitMode(DEFAULT_SETTINGS.waitMode);
+        setTransposeSemis(DEFAULT_SETTINGS.transposeSemis);
+      }, []);
+
       useEffect(() => { pressedMaskRef.current = pressedMask; }, [pressedMask]);
       const micNoteRaw = useMicPitch(micEnabled);
       // Convert mic (concert) -> written pitch for comparisons/overlay/display
@@ -1904,30 +1981,35 @@
         const ts = midi.header.timeSignatures?.length ? midi.header.timeSignatures[0] : { timeSignature: [4, 4] };
         const tsArr = ts.timeSignature || [4, 4];
 
+        const playableTracks = midi.tracks
+          .map((t, i) => ({
+            name: t.name || t.instrument?.name || `Track ${i + 1}`,
+            // keep a source index if you ever need it later
+            srcIndex: i,
+            notes: (t.notes || []).map(n => ({
+              name: n.name,
+              midi: n.midi,
+              time: n.time,
+              duration: n.duration,
+              ticks: n.ticks,
+              durationTicks: n.durationTicks,
+              velocity: n.velocity
+            }))
+          }))
+          .filter(t => (t.notes?.length || 0) > 0);
+
         setMidiMeta({
           title,
           ppq: midi.header.ppq || 480,
-          tracks: midi.tracks.map((t, i) => ({
-            name: t.name || `Track ${i + 1}`,
-            notes: t.notes?.map(n => ({
-              name: n.name,
-              midi: n.midi,
-              time: n.time,               // seconds (Tone clock)
-              duration: n.duration,       // seconds
-              ticks: n.ticks,             // absolute ticks from MIDI
-              durationTicks: n.durationTicks, // duration in ticks
-              velocity: n.velocity
-            })) || []
-          }))
+          tracks: playableTracks
         });
+        // start from the first playable track
         setTrackIndex(0);
         setBpm(Math.round(bpm0));
         setTimeSig([tsArr[0] || 4, tsArr[1] || 4]);
 
-        // Select first non-empty track
-        const idx = (midi.tracks.findIndex(t => (t.notes?.length || 0) > 0) + midi.tracks.length) % midi.tracks.length;
-        setTrackIndex(idx);
-        const selectedNotes = midi.tracks[idx].notes?.map(n => ({
+        // Notes from the first playable track
+        const selectedNotes = playableTracks[0]?.notes?.map(n => ({
           name: n.name,
           midi: n.midi,
           time: n.time,
@@ -2540,6 +2622,7 @@
             setExpertMode={setExpertMode}
             transposeSemis={transposeSemis}
             setTransposeSemis={setTransposeSemis}
+            onResetSettings={resetSettings}
           />
         </div>
       );
