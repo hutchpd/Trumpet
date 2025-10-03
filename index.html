@@ -60,8 +60,10 @@
     html,
     body,
     #root {
-      height: 100%;
+      height: 100dvh;
+      min-height: 100dvh;
     }
+
 
     body {
       margin: 0;
@@ -119,18 +121,19 @@
       border-radius: 999px;
       background: rgba(255, 255, 255, .06);
       border: 1px solid rgba(255, 255, 255, .12);
-      white-space: nowrap; 
+      white-space: nowrap;
     }
 
     .transport {
       display: inline-flex;
       align-items: center;
       border-radius: 9999px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.12);
-      box-shadow: 0 8px 24px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05);
+      background: rgba(255, 255, 255, .06);
+      border: 1px solid rgba(255, 255, 255, .12);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .05);
       overflow: hidden;
     }
+
     .transport .tbtn {
       width: 42px;
       height: 42px;
@@ -141,15 +144,25 @@
       transition: background-color .12s ease, filter .12s ease;
       user-select: none;
     }
-    .transport .tbtn + .tbtn { border-left: 1px solid rgba(255,255,255,.08); }
-    .transport .tbtn:hover { background: rgba(255,255,255,.06); }
-    .transport .tbtn:disabled { opacity: .4; }
+
+    .transport .tbtn+.tbtn {
+      border-left: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .transport .tbtn:hover {
+      background: rgba(255, 255, 255, .06);
+    }
+
+    .transport .tbtn:disabled {
+      opacity: .4;
+    }
+
     .transport .tbtn.play {
       font-size: 19px;
-      filter: drop-shadow(0 0 10px rgba(80,180,255,.25));
+      filter: drop-shadow(0 0 10px rgba(80, 180, 255, .25));
       background:
-        radial-gradient(120% 140% at 50% -20%, rgba(80,160,255,.18), transparent 55%),
-        rgba(255,255,255,.02);
+        radial-gradient(120% 140% at 50% -20%, rgba(80, 160, 255, .18), transparent 55%),
+        rgba(255, 255, 255, .02);
     }
 
 
@@ -368,7 +381,7 @@
       }
     }
     const persistSettings = debounce((settings) => {
-      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { }
     }, 150);
 
 
@@ -617,7 +630,7 @@
             synthRef.current.volume.value = muted ? -120 : -8;
             if (muted) synthRef.current.releaseAll?.();
           }
-        } catch {}
+        } catch { }
       }, []);
 
 
@@ -650,7 +663,7 @@
 
       const clearPart = useCallback(() => {
         if (partRef.current) {
-          try { partRef.current.dispose(); } catch {}
+          try { partRef.current.dispose(); } catch { }
           partRef.current = null;
         }
       }, []);
@@ -659,7 +672,7 @@
       const stopAll = useCallback(() => {
         try {
           synthRef.current?.releaseAll?.();
-        } catch {}
+        } catch { }
       }, []);
 
 
@@ -1182,12 +1195,13 @@
       useEffect(() => { tickRef.current = currentTicks || 0; }, [currentTicks]);
       const activePointersRef = useRef(new Map());
 
-      const hitYRatio = 0.88; // the hit line y position (as a proportion of height)
+      const hitYRatio = 0.88;              // the hit line y position (as a proportion of height)
       const vanishYRatio = 0.18;           // where things originate (near top)
-      const laneGapAtHit = 28;             // px gap between lanes AT THE HIT LINE
-      const totalWidthFrac = 0.8;          // how much of screen width the runway uses at hit line
-      const minLaneWidthFar = 0;           // lane width “in the distance”
-      const gamma = 1.15;                  // easing for depth → screen mapping
+      const isNarrow = width < 420;
+      const totalWidthFrac = isNarrow ? 0.70 : 0.80;   // 70% on phones, 80% otherwise
+      const laneGapAtHit = isNarrow ? Math.max(12, Math.round(width * 0.04)) : 28;
+      const minLaneWidthFar = 0;           // lane width "in the distance!"
+      const gamma = 1.15;                  // easing for depth -> screen mapping
 
       const [frame, setFrame] = useState(0); // force updates on resize
 
@@ -1196,10 +1210,11 @@
         const c = canvasRef.current;
         if (!c) return;
         const dpr = window.devicePixelRatio || 1;
-        c.width = Math.round(width * dpr);
-        c.height = Math.round(height * dpr);
-        c.style.width = width + 'px';
-        c.style.height = height + 'px';
+        // Read the actual on-screen size the canvas is occupying
+        const cssW = Math.round(c.clientWidth || width || 0);
+        const cssH = Math.round(c.clientHeight || height || 0);
+        c.width  = Math.max(1, Math.round(cssW * dpr));
+        c.height = Math.max(1, Math.round(cssH * dpr));
         const ctx = c.getContext('2d');
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         setFrame(f => f + 1);
@@ -1261,7 +1276,7 @@
           startLeftAtHit + i * (laneWidthAtHit + laneGapAtHit) + laneWidthAtHit / 2
         );
         const laneColors = ['#23f5b0', '#ffd33d', '#8ae1ff']; // per-valve
-        const receptorRadius = 11;
+        const receptorRadius = isNarrow ? 9 : 11;
 
         // Project a param u in [0..1] (0=far, 1=at hit line) to y coordinate
         const uToY = (u) => {
@@ -1670,32 +1685,155 @@
     /******************************
      * Controls
      ******************************/
-function Controls({
-  isLoaded, running, onPlayPause, onStop, onGoStart,
-  bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
-  stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis,
-  isMobile, onOpenPicker
-}) {
-  // Minimal when running (both desktop & mobile)
-  if (running  && isMobile) {
-    return (
-      <div className="hud w-full flex items-center justify-center">
-        <div className="transport" role="group" aria-label="Transport">
-          <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-          <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
-          <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
-        </div>
-      </div>
-    );
-  }
+    function Controls({
+      isLoaded, running, onPlayPause, onStop, onGoStart,
+      bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
+      stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis,
+      isMobile, onOpenPicker
+    }) {
+      // Minimal when running (both desktop & mobile)
+      if (running && isMobile) {
+        return (
+          <div className="hud w-full flex items-center justify-center">
+            <div className="transport" role="group" aria-label="Transport">
+              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
+              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
+              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+            </div>
+          </div>
+        );
+      }
 
-  // Mobile-first grid when *not* running
-  if (isMobile) {
-    return (
-      <div className="hud w-full">
-        <div className="grid grid-cols-2 gap-3 w-full">
-          {/* Transport – centered & big */}
-          <div className="col-span-2 flex justify-center">
+      // Mobile-first grid when *not* running
+      if (isMobile) {
+        return (
+          <div className="hud w-full">
+            <div className="grid grid-cols-2 gap-3 w-full">
+              {/* Transport – centered & big */}
+              <div className="col-span-2 flex justify-center">
+                <div className="transport" role="group" aria-label="Transport">
+                  <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
+                  <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
+                  <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+                </div>
+              </div>
+
+              {/* Pick song – opens modal (also allows upload inside modal) */}
+              <button
+                type="button"
+                className="pill cursor-pointer hover:brightness-110"
+                onClick={onOpenPicker}
+                title="Choose a preloaded song or upload your own"
+              >
+                Pick song
+              </button>
+
+              {/* Track select */}
+              <label className="pill col-span-2 flex items-center justify-center gap-2 text-sm">
+                <span className="text-slate-300">Track</span>
+                <select
+                  className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+                  value={trackIndex ?? 0}
+                  onChange={(e) => onTrackIndex(+e.target.value)}
+                  disabled={!isLoaded}
+                >
+                  {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
+                </select>
+              </label>
+
+              {/* Wait & Transpose side-by-side */}
+              <button
+                type="button"
+                onClick={() => onWaitMode(!waitMode)}
+                className={
+                  "pill text-xs flex items-center justify-center " +
+                  (waitMode ? "border border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border border-slate-600 text-slate-200")
+                }
+                title="Require holding each correct note before continuing"
+              >
+                {waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}
+              </button>
+
+              <label className="pill text-sm flex items-center justify-center gap-2">
+                <span className="text-slate-300">Key</span>
+                <select
+                  className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+                  value={transposeSemis}
+                  onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
+                  title="Shift mic (concert) to written pitch"
+                >
+                  <option value={0}>C (0)</option>
+                  <option value={2}>B♭ (+2)</option>
+                  <option value={7}>F (+7)</option>
+                  <option value={9}>E♭ (+9)</option>
+                </select>
+              </label>
+
+              {/* Tempo slider – full width */}
+              <label className="pill col-span-2 flex items-center gap-2 text-sm">
+                <span className="text-slate-300">Tempo</span>
+                <input className="flex-1" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
+                <span className="w-10 text-right">{bpm}</span>
+                <span className="text-slate-400 text-xs ml-1">BPM</span>
+              </label>
+
+              {/* Stats / Mic – centered fine print */}
+              <div className="col-span-2 text-center space-y-1">
+                <div className="text-xs text-slate-300">
+                  Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
+                    <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
+                  </span>
+                  <span className="mx-3">
+                    Miss: <span className="font-semibold text-rose-400">
+                      <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.missTime.toFixed(2)}</span>s
+                    </span>
+                  </span>
+                  Acc: <span className="font-semibold">
+                    <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
+                      {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
+                    </span>%
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 font-mono tabular-nums">
+                  {micEnabled
+                    ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
+                    : 'Mic: off'}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // Desktop (unchanged layout)
+      return (
+        <div className="hud w-full">
+          {/* LEFT CLUSTER */}
+          <div className="flex-none mx-auto">
+            <label className="pill flex items-center gap-2 text-sm">
+              <span className="text-slate-300">Track</span>
+              <select
+                className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+                value={trackIndex ?? 0}
+                onChange={(e) => onTrackIndex(+e.target.value)}
+                disabled={!isLoaded}
+              >
+                {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={() => onWaitMode(!waitMode)}
+                className={
+                  "ml-1 px-3 py-1 rounded border text-xs " +
+                  (waitMode ? "border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border-slate-600 text-slate-200")
+                }
+                title="Require holding each correct note before continuing"
+              >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
+            </label>
+          </div>
+
+          {/* CENTER CLUSTER */}
+          <div className="justify-self-center">
             <div className="transport" role="group" aria-label="Transport">
               <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
               <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
@@ -1703,191 +1841,68 @@ function Controls({
             </div>
           </div>
 
-          {/* Pick song – opens modal (also allows upload inside modal) */}
+          {/* RIGHT CLUSTER */}
+          <div className="flex items-center gap-2 justify-end flex-1 basis-0 min-w-[320px] flex-wrap">
+            <label className="pill flex items-center gap-2 text-sm">
+              <span className="text-slate-300">Tempo</span>
+              <input className="w-40" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
+              <span className="w-10 text-right">{bpm}</span>
+              <span className="text-slate-400 text-xs ml-1">BPM</span>
+            </label>
+
+            <label className="pill flex items-center gap-2 text-sm">
+              <span className="text-slate-300">Transposition</span>
+              <select
+                className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+                value={transposeSemis}
+                onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
+                title="Shift mic (concert) to written pitch"
+              >
+                <option value={0}>C (0)</option>
+                <option value={2}>B♭ (+2)</option>
+                <option value={7}>F (+7)</option>
+                <option value={9}>E♭ (+9)</option>
+              </select>
+            </label>
+
             <button
               type="button"
-              className="pill cursor-pointer hover:brightness-110"
+              className="pill text-sm hover:brightness-110"
               onClick={onOpenPicker}
               title="Choose a preloaded song or upload your own"
-            >
-              Pick song
-            </button>
+            >Pick song</button>
 
-          {/* Track select */}
-          <label className="pill col-span-2 flex items-center justify-center gap-2 text-sm">
-            <span className="text-slate-300">Track</span>
-            <select
-              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-              value={trackIndex ?? 0}
-              onChange={(e) => onTrackIndex(+e.target.value)}
-              disabled={!isLoaded}
-            >
-              {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
-            </select>
-          </label>
-
-          {/* Wait & Transpose side-by-side */}
-          <button
-            type="button"
-            onClick={() => onWaitMode(!waitMode)}
-            className={
-              "pill text-xs flex items-center justify-center " +
-              (waitMode ? "border border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border border-slate-600 text-slate-200")
-            }
-            title="Require holding each correct note before continuing"
-          >
-            {waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}
-          </button>
-
-          <label className="pill text-sm flex items-center justify-center gap-2">
-            <span className="text-slate-300">Transposition</span>
-            <select
-              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-              value={transposeSemis}
-              onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
-              title="Shift mic (concert) to written pitch"
-            >
-              <option value={0}>C (0)</option>
-              <option value={2}>B♭ (+2)</option>
-              <option value={7}>F (+7)</option>
-              <option value={9}>E♭ (+9)</option>
-            </select>
-          </label>
-
-          {/* Tempo slider – full width */}
-          <label className="pill col-span-2 flex items-center gap-2 text-sm">
-            <span className="text-slate-300">Tempo</span>
-            <input className="flex-1" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
-            <span className="w-10 text-right">{bpm}</span>
-            <span className="text-slate-400 text-xs ml-1">BPM</span>
-          </label>
-
-          {/* Stats / Mic – centered fine print */}
-          <div className="col-span-2 text-center space-y-1">
-            <div className="text-xs text-slate-300">
-              Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
-                <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
+            <div className="text-xs text-slate-300 ml-1">
+              <span className="mr-3">
+                Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
+                  <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
+                </span>
               </span>
-              <span className="mx-3">
+              <span className="mr-3">
                 Miss: <span className="font-semibold text-rose-400">
                   <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.missTime.toFixed(2)}</span>s
                 </span>
               </span>
-              Acc: <span className="font-semibold">
-                <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
-                  {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
-                </span>%
+              <span>
+                Acc: <span className="font-semibold">
+                  <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
+                    {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
+                  </span>%
+                </span>
               </span>
             </div>
+
             <div className="text-xs text-slate-400 font-mono tabular-nums">
-              {micEnabled
-                ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
-                : 'Mic: off'}
+              <span className="inline-block w-[18ch]">
+                {micEnabled
+                  ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
+                  : 'Mic: off'}
+              </span>
             </div>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  // Desktop (unchanged layout)
-  return (
-    <div className="hud w-full">
-      {/* LEFT CLUSTER */}
-      <div className="flex-none mx-auto">
-        <label className="pill flex items-center gap-2 text-sm">
-          <span className="text-slate-300">Track</span>
-          <select
-            className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-            value={trackIndex ?? 0}
-            onChange={(e) => onTrackIndex(+e.target.value)}
-            disabled={!isLoaded}
-          >
-            {(trackNames || []).map((t, i) => <option key={i} value={i}>{t || `Track ${i + 1}`}</option>)}
-          </select>
-          <button
-            type="button"
-            onClick={() => onWaitMode(!waitMode)}
-            className={
-              "ml-1 px-3 py-1 rounded border text-xs " +
-              (waitMode ? "border-emerald-400 text-emerald-300 bg-emerald-500/10" : "border-slate-600 text-slate-200")
-            }
-            title="Require holding each correct note before continuing"
-          >{waitMode ? "Play-to-Advance: On" : "Play-to-Advance: Off"}</button>
-        </label>
-      </div>
-
-      {/* CENTER CLUSTER */}
-      <div className="justify-self-center">
-        <div className="transport" role="group" aria-label="Transport">
-          <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-          <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
-          <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
-        </div>
-      </div>
-
-      {/* RIGHT CLUSTER */}
-      <div className="flex items-center gap-2 justify-end flex-1 basis-0 min-w-[320px] flex-wrap">
-        <label className="pill flex items-center gap-2 text-sm">
-          <span className="text-slate-300">Tempo</span>
-          <input className="w-40" type="range" min="40" max="200" step="1" value={bpm} onChange={(e) => onBpm(+e.target.value)} />
-          <span className="w-10 text-right">{bpm}</span>
-          <span className="text-slate-400 text-xs ml-1">BPM</span>
-        </label>
-
-        <label className="pill flex items-center gap-2 text-sm">
-          <span className="text-slate-300">Transposition</span>
-          <select
-            className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-            value={transposeSemis}
-            onChange={(e) => onTransposeSemis(parseInt(e.target.value, 10))}
-            title="Shift mic (concert) to written pitch"
-          >
-            <option value={0}>C (0)</option>
-            <option value={2}>B♭ (+2)</option>
-            <option value={7}>F (+7)</option>
-            <option value={9}>E♭ (+9)</option>
-          </select>
-        </label>
-
-        <button
-          type="button"
-          className="pill text-sm hover:brightness-110"
-          onClick={onOpenPicker}
-          title="Choose a preloaded song or upload your own"
-        >Pick song</button>
-
-        <div className="text-xs text-slate-300 ml-1">
-          <span className="mr-3">
-            Hit: <span className="font-semibold" style={{ color: 'var(--laneA)' }}>
-              <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.hitTime.toFixed(2)}</span>s
-            </span>
-          </span>
-          <span className="mr-3">
-            Miss: <span className="font-semibold text-rose-400">
-              <span className="inline-block w-[6ch] text-right tabular-nums font-mono">{stats.missTime.toFixed(2)}</span>s
-            </span>
-          </span>
-          <span>
-            Acc: <span className="font-semibold">
-              <span className="inline-block w-[4ch] text-right tabular-nums font-mono">
-                {(stats.hitTime + stats.missTime) > 0 ? Math.round(100 * stats.hitTime / (stats.hitTime + stats.missTime)) : 0}
-              </span>%
-            </span>
-          </span>
-        </div>
-
-        <div className="text-xs text-slate-400 font-mono tabular-nums">
-          <span className="inline-block w-[18ch]">
-            {micEnabled
-              ? (micNote ? `Mic: ${midiToNoteName(micNote.midi)} ${micNote.cents >= 0 ? '+' : ''}${String(micNote.cents)}¢` : 'Mic: listening…')
-              : 'Mic: off'}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
+      );
+    }
 
 
     /******************************
@@ -1900,7 +1915,7 @@ function Controls({
       micEnabled, setMicEnabled,
       expertMode, setExpertMode,
       transposeSemis, setTransposeSemis,
-      onResetSettings = () => {},
+      onResetSettings = () => { },
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
 
@@ -1989,21 +2004,21 @@ function Controls({
               </label>
               <p className="text-xs text-slate-400 mt-2">Simple autocorrelation detector; use a quiet room for best results.</p>
               <div className="mt-3">
-            <label className="text-sm text-slate-300 block mb-1">Instrument transposition (semitones)</label>
-            <select
-              className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
-              value={transposeSemis}
-              onChange={(e) => setTransposeSemis(parseInt(e.target.value, 10))}
-            >
-              <option value={0}>C (0)</option>
-              <option value={2}>B♭ (+2)</option>
-              <option value={7}>F (+7)</option>
-              <option value={9}>E♭ (+9)</option>
-            </select>
-            <p className="text-xs text-slate-400 mt-1">
-              Converts mic’s concert pitch to written pitch for comparison/overlay.
-            </p>
-          </div>
+                <label className="text-sm text-slate-300 block mb-1">Instrument transposition (semitones)</label>
+                <select
+                  className="bg-slate-900/70 border border-slate-700/60 rounded px-2 py-1"
+                  value={transposeSemis}
+                  onChange={(e) => setTransposeSemis(parseInt(e.target.value, 10))}
+                >
+                  <option value={0}>C (0)</option>
+                  <option value={2}>B♭ (+2)</option>
+                  <option value={7}>F (+7)</option>
+                  <option value={9}>E♭ (+9)</option>
+                </select>
+                <p className="text-xs text-slate-400 mt-1">
+                  Converts mic’s concert pitch to written pitch for comparison/overlay.
+                </p>
+              </div>
 
             </section>
 
@@ -2065,10 +2080,10 @@ function Controls({
      ******************************/
     const SONG_CATALOG = {
       songs: [
-/*        { id: 'happy-birthday', title: 'Happy Birthday', url: './songs/happy_birthday.mid' },
-        { id: 'bella-ciao', title: 'Bella Ciao', url: './songs/bella_ciao.mid' },
-        { id: 'wellerman', title: 'Wellerman (Sea Shanty)', url: './songs/wellerman.mid' },
-        { id: 'largo-dvorak', title: 'Largo (From “New World” Symphony)', url: './songs/largo_new_world.mid' },*/
+        /*        { id: 'happy-birthday', title: 'Happy Birthday', url: './songs/happy_birthday.mid' },
+                { id: 'bella-ciao', title: 'Bella Ciao', url: './songs/bella_ciao.mid' },
+                { id: 'wellerman', title: 'Wellerman (Sea Shanty)', url: './songs/wellerman.mid' },
+                { id: 'largo-dvorak', title: 'Largo (From “New World” Symphony)', url: './songs/largo_new_world.mid' },*/
         { id: 'ode-to-joy', title: 'Ode to Joy', url: './songs/ode_to_joy.mid' },
         { id: 'oompa-loompa', title: 'Oompa Loompa', url: './songs/oompa_loompa.mid' }
       ],
@@ -2120,7 +2135,7 @@ function Controls({
               <div className="mt-8">
                 <h3 className="text-sm font-semibold text-slate-200 mb-2">Or upload your own</h3>
                 <label className="inline-block pill cursor-pointer hover:brightness-110">
-                  <input className="hidden" type="file" accept=".mid,.midi,audio/midi" onChange={(e)=> onUploadFile(e.target.files?.[0] || null)} />
+                  <input className="hidden" type="file" accept=".mid,.midi,audio/midi" onChange={(e) => onUploadFile(e.target.files?.[0] || null)} />
                   <span>Upload MIDI…</span>
                 </label>
               </div>
@@ -2142,7 +2157,7 @@ function Controls({
       const [keyMask, setKeyMask] = useState(0);
       const [touchMask, setTouchMask] = useState(0);
       const [pressedMask, setPressedMask] = useState(0);
-      
+
       const [lookahead, setLookahead] = useState(initialSettings.lookahead);
       const [micEnabled, setMicEnabled] = useState(initialSettings.micEnabled);
       const [expertMode, setExpertMode] = useState(initialSettings.expertMode);
@@ -2173,8 +2188,9 @@ function Controls({
       const [timeSig, setTimeSig] = useState([4, 4]);
 
       const [running, setRunning] = useState(false);
-      const [canvasSize, setCanvasSize] = useState({ w: 800, h: 360 });
-      const highwayBoxRef = useRef(null);
+      const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+      const highwayMeasureRef = useRef(null);
+      const highwayPulseRef = useRef(null);
 
       const [stats, setStats] = useState({ hitTime: 0, missTime: 0 });
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
@@ -2190,7 +2206,7 @@ function Controls({
       // Combine keyboard + touch into effective pressed mask
       useEffect(() => {
         setPressedMask(keyMask | touchMask);
-      }, [keyMask, touchMask]);      
+      }, [keyMask, touchMask]);
 
       // Optional nicety: if user previously enabled mic, only auto-enable
       // when permission is already granted (prevents surprise prompt on load)
@@ -2200,13 +2216,13 @@ function Controls({
         try {
           navigator.permissions.query({ name: 'microphone' }).then(p => {
             if (p.state === 'granted') setMicEnabled(true);
-          }).catch(() => {});
-        } catch {}
+          }).catch(() => { });
+        } catch { }
       }, []);
 
       // One-click reset (also clears storage)
       const resetSettings = useCallback(() => {
-        try { localStorage.removeItem(SETTINGS_KEY); } catch {}
+        try { localStorage.removeItem(SETTINGS_KEY); } catch { }
         setKeyMap({ ...defaultKeyMap });
         setLookahead(DEFAULT_SETTINGS.lookahead);
         setMicEnabled(DEFAULT_SETTINGS.micEnabled);
@@ -2238,18 +2254,18 @@ function Controls({
 
       // Stable sizing via ResizeObserver (prevents layout creep)
       useEffect(() => {
-        const el = highwayBoxRef.current;
+        const el = highwayMeasureRef.current;
         if (!el) return;
         const ro = new ResizeObserver(entries => {
           const r = entries[0].contentRect;
           setCanvasSize({ w: Math.round(r.width), h: Math.round(r.height) });
         });
-        // Seed initial size
+        // Seed and observe
         const r0 = el.getBoundingClientRect();
         setCanvasSize({ w: Math.round(r0.width), h: Math.round(r0.height) });
         ro.observe(el);
         return () => ro.disconnect();
-      }, []);
+      }, [showHighway]);
 
       function fixUtf8Mojibake(s) {
         try {
@@ -2359,7 +2375,7 @@ function Controls({
           schedulePart(n, scaleToTransport);
         } else {
           clearPart();
-          try { Tone.Transport.stop(); } catch {}
+          try { Tone.Transport.stop(); } catch { }
         }
         const events = buildLaneEvents(n, bpm, noteNameToMask, lookahead);
         setLaneEvents(events);
@@ -2382,7 +2398,7 @@ function Controls({
         if (!notes.length) return;
         if (waitMode) {
           if (!running) {
-            try { Tone.Transport.stop(); } catch {}
+            try { Tone.Transport.stop(); } catch { }
             clearPart();              // ensure nothing is scheduled
             setRunning(true);         // drive our own gate loop/UI
             // Optional: arm the first playable note right away
@@ -2390,7 +2406,7 @@ function Controls({
           } else {
             setRunning(false);
             gateRef.current = { active: false, noteIndex: -1 };
-            try { Tone.Transport.stop(); } catch {}
+            try { Tone.Transport.stop(); } catch { }
             clearPart();
           }
           return;
@@ -2418,7 +2434,7 @@ function Controls({
             Tone.Transport.pause();
             Tone.Transport.ticks = 0;
           }
-        } catch {}
+        } catch { }
         setTransportTicks(0);
         // In hold-to-advance mode, (re)arm the first playable note for gating if running
         if (waitMode && running) {
@@ -2429,8 +2445,8 @@ function Controls({
 
       // Stop: pause and return to beginning
       const stopTransport = useCallback(() => {
-        try { Tone.Transport.stop(); } catch {}
-        try { stopAll(); } catch {}
+        try { Tone.Transport.stop(); } catch { }
+        try { stopAll(); } catch { }
         setRunning(false);
         setTransportTicks(0);
         // Clear any gating state
@@ -2498,7 +2514,7 @@ function Controls({
           Tone.Transport.pause();
           Tone.Transport.ticks = Math.round((n.ticks || 0) * toTransport);
           stopAll();
-        } catch {}
+        } catch { }
 
         gateRef.current = {
           active: true,
@@ -2597,7 +2613,7 @@ function Controls({
         // If user turns on waitMode while already running, snap into gated state now.
         if (waitMode && running && notes.length) {
           // Kill any scheduled playback first, then gate.
-          try { Tone.Transport.stop(); } catch {}
+          try { Tone.Transport.stop(); } catch { }
           clearPart();
           const midiPPQ = midiMeta.ppq || 480;
           const transportPPQ = Tone.Transport.PPQ || 192;
@@ -2624,7 +2640,7 @@ function Controls({
                 Tone.Transport.pause();
                 Tone.Transport.ticks = Math.round((n.ticks || 0) * toTransport);
                 stopAll();
-              } catch {}
+              } catch { }
               // Arm the hold-to-advance gate immediately
               gateRef.current = {
                 active: true,
@@ -2653,7 +2669,7 @@ function Controls({
 
           if (running && gateRef.current.active) {
             gateRef.current = { active: false, noteIndex: gateRef.current.noteIndex };
-            try { Tone.Transport.start('+0.02'); } catch {}
+            try { Tone.Transport.start('+0.02'); } catch { }
           }
         }
       }, [waitMode, running, notes, midiMeta.ppq, readyRef, stopAll, setBackingMuted, schedulePart, clearPart]);
@@ -2714,7 +2730,7 @@ function Controls({
 
                 if (!armGateForIndex(nextIdx)) {
                   // No next note — end of piece
-                  try { Tone.Transport.stop(); } catch {}
+                  try { Tone.Transport.stop(); } catch { }
                   setRunning(false);
                   gateRef.current = { active: false, noteIndex: -1 };
                 }
@@ -2737,7 +2753,7 @@ function Controls({
                     Tone.Transport.pause();
                     Tone.Transport.ticks = Math.round((n.ticks || 0) * (toTransport));
                     stopAll();
-                  } catch {}
+                  } catch { }
                   gateRef.current = {
                     active: true,
                     noteIndex: idx,
@@ -2824,9 +2840,10 @@ function Controls({
           const p = (ticks % ppq) / ppq;                 // 0..1
           const tri = 1 - Math.abs(2 * p - 1);             // triangle
           const pulse = Math.pow(tri, 2);                // eased
-          if (highwayBoxRef.current) {
-            highwayBoxRef.current.style.setProperty('--pulse', String(pulse));
-            highwayBoxRef.current.style.setProperty('--pulseAmp', String(0.45 + pulseAmpRef.current));
+          const host = highwayPulseRef.current;
+          if (host) {
+            host.style.setProperty('--pulse', String(pulse));
+            host.style.setProperty('--pulseAmp', String(0.45 + pulseAmpRef.current));
           }
           raf = requestAnimationFrame(drive);
         };
@@ -2836,7 +2853,7 @@ function Controls({
 
 
       return (
-        <div className="h-full w-full flex flex-col">
+        <div className="h-full w-full flex flex-col min-h-0">
           {/* Top bar */}
           <header className="w-full flex items-center gap-3 px-3 py-2"
             style={{
@@ -2895,33 +2912,35 @@ function Controls({
 
           {/* Highway */}
           {showHighway ? (
-            <section id="highway" ref={highwayBoxRef} className="flex-1 px-3 py-3">
-              <div
-                ref={highwayBoxRef}
-                className="grid-drift relative w-full h-full min-h-[200px] sm:min-h-[260px] overflow-hidden"
-                style={{
-                  '--beat': (60 / (bpm || 120)) + 's',
-                  '--cell': Math.round(Math.max(28, Math.min(64, 52 - (bpm - 120) * 0.10))) + 'px'
-                }}
-              >
-                <NoteHighway
-                  laneEvents={laneEvents}
-                  keyStateMask={pressedMask}
-                  width={canvasSize.w || 800}
-                  height={canvasSize.h || 320}
-                  lookahead={lookahead}
-                  onHitJudgement={onHitJudgement}
-                  running={running}
-                  currentTicks={transportTicks}
-                  bpm={bpm}
-                  ppq={midiMeta.ppq || 480}
-                  onTouchMaskChange={setTouchMask}
-                />
-                <div className="hitline" style={{ top: ((canvasSize.h || 320) * 0.88) + 'px' }} />
-                <div className="absolute left-0 right-0 bottom-1 flex justify-center gap-12 text-xs text-slate-300">
-                  <div style={{ color: 'var(--laneA)' }}>Valve 1</div>
-                  <div style={{ color: 'var(--laneB)' }}>Valve 2</div>
-                  <div style={{ color: 'var(--laneC)' }}>Valve 3</div>
+            <section id="highway" className="flex-1 px-3 py-3 min-h-0">
+              <div className="w-full h-full min-h-0">
+                <div
+                  ref={highwayMeasureRef}
+                  className="grid-drift relative w-full h-full min-h-[120px] md:min-h-0 overflow-hidden"
+                  style={{
+                    '--beat': (60 / (bpm || 120)) + 's',
+                    '--cell': Math.round(Math.max(28, Math.min(64, 52 - (bpm - 120) * 0.10))) + 'px'
+                  }}
+                >
+                  <NoteHighway
+                    laneEvents={laneEvents}
+                    keyStateMask={pressedMask}
+                    width={Math.max(1, canvasSize.w || highwayMeasureRef.current?.clientWidth || 0)}
+                    height={Math.max(1, canvasSize.h || highwayMeasureRef.current?.clientHeight || 0)}
+                    lookahead={lookahead}
+                    onHitJudgement={onHitJudgement}
+                    running={running}
+                    currentTicks={transportTicks}
+                    bpm={bpm}
+                    ppq={midiMeta.ppq || 480}
+                    onTouchMaskChange={setTouchMask}
+                  />
+                  <div className="hitline" style={{ top: (canvasSize.h * 0.88) + 'px' }} />
+                  <div className="absolute left-0 right-0 bottom-1 flex justify-center gap-12 text-xs text-slate-300">
+                    <div style={{ color: 'var(--laneA)' }}>Valve 1</div>
+                    <div style={{ color: 'var(--laneB)' }}>Valve 2</div>
+                    <div style={{ color: 'var(--laneC)' }}>Valve 3</div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -2929,7 +2948,7 @@ function Controls({
             // Mobile-only placeholder (saves space before playback)
             <section className="px-3 py-3 sm:hidden">
               <div className="w-full rounded-md border border-slate-700/60 bg-slate-900/40 p-4 text-center text-slate-300">
-                Game will start when press <span className="font-semibold">Play</span>.
+                Game will start when you press <span className="font-semibold">Play</span>.
                 <div className="text-xs text-slate-400 mt-1">Upload a MIDI and pick a track first.</div>
               </div>
             </section>
