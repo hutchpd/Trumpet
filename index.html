@@ -1674,7 +1674,7 @@ function Controls({
   isLoaded, running, onPlayPause, onStop, onGoStart,
   bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
   stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis,
-  isMobile
+  isMobile, onOpenPicker
 }) {
   // Minimal when running (both desktop & mobile)
   if (running  && isMobile) {
@@ -1703,19 +1703,15 @@ function Controls({
             </div>
           </div>
 
-          {/* Upload – always visible */}
-          <div className="col-span-2 flex justify-center">
-            <input
-              className="hidden"
-              id="midiFile"
-              type="file"
-              accept=".mid,.midi,audio/midi"
-              onChange={(e) => onFile(e.target.files?.[0] || null)}
-            />
-            <span className="pill cursor-pointer hover:brightness-110">
-              <label htmlFor="midiFile" className="cursor-pointer">Upload MIDI</label>
-            </span>
-          </div>
+          {/* Pick song – opens modal (also allows upload inside modal) */}
+            <button
+              type="button"
+              className="pill cursor-pointer hover:brightness-110"
+              onClick={onOpenPicker}
+              title="Choose a preloaded song or upload your own"
+            >
+              Pick song
+            </button>
 
           {/* Track select */}
           <label className="pill col-span-2 flex items-center justify-center gap-2 text-sm">
@@ -1854,12 +1850,12 @@ function Controls({
           </select>
         </label>
 
-        <label className="text-sm flex items-center gap-2">
-          <input className="hidden" id="midiFile" type="file" accept=".mid,.midi,audio/midi" onChange={(e) => onFile(e.target.files?.[0] || null)} />
-          <span className="pill cursor-pointer hover:brightness-110">
-            <label htmlFor="midiFile" className="cursor-pointer">Upload MIDI</label>
-          </span>
-        </label>
+        <button
+          type="button"
+          className="pill text-sm hover:brightness-110"
+          onClick={onOpenPicker}
+          title="Choose a preloaded song or upload your own"
+        >Pick song</button>
 
         <div className="text-xs text-slate-300 ml-1">
           <span className="mr-3">
@@ -2065,6 +2061,78 @@ function Controls({
     }
 
     /******************************
+     * Song Catalog (easy to extend)
+     ******************************/
+    const SONG_CATALOG = {
+      songs: [
+/*        { id: 'happy-birthday', title: 'Happy Birthday', url: './songs/happy_birthday.mid' },
+        { id: 'bella-ciao', title: 'Bella Ciao', url: './songs/bella_ciao.mid' },
+        { id: 'wellerman', title: 'Wellerman (Sea Shanty)', url: './songs/wellerman.mid' },
+        { id: 'largo-dvorak', title: 'Largo (From “New World” Symphony)', url: './songs/largo_new_world.mid' },
+        { id: 'ode-to-joy', title: 'Ode to Joy', url: './songs/ode_to_joy.mid' },*/
+        { id: 'oompa-loompa', title: 'Oompa Loompa', url: './songs/oompa_loompa.mid' }
+      ],
+      scales: [
+        { id: 'c-major-1oct', title: 'C Major – 1 octave', url: './scales/C_major_1oct.mid' }
+        /*{ id: 'bb-major-1oct', title: 'B♭ Major – 1 octave', url: './scales/Bb_major_1oct.mid' },
+        { id: 'g-major-1oct', title: 'G Major – 1 octave', url: './scales/G_major_1oct.mid' },
+        { id: 'f-major-1oct', title: 'F Major – 1 octave', url: './scales/F_major_1oct.mid' } */
+      ]
+    };
+
+    /******************************
+     * Song Picker Modal
+     ******************************/
+    function SongPickerModal({ open, onClose, onPickUrl, onUploadFile }) {
+      if (!open) return null;
+      const Section = ({ label, items }) => (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-slate-200 mb-2">{label}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {items.map(item => (
+              <button
+                key={item.id}
+                onClick={() => { onPickUrl(item.url, item.title); }}
+                className="text-left px-3 py-2 rounded-lg border border-slate-700/60 bg-slate-800/70 hover:bg-slate-700/60"
+              >
+                <div className="font-medium">{item.title}</div>
+                <div className="text-xs text-slate-400 break-all">{item.url}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+          <div className="absolute inset-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+                          sm:max-w-[720px] sm:w-[92vw] sm:max-h-[85vh] sm:rounded-xl
+                          bg-slate-900/95 border border-slate-700/60 shadow-xl
+                          flex flex-col h-full sm:h-auto">
+            <div className="p-4 border-b border-slate-700/60 flex items-center">
+              <h2 className="text-lg font-semibold">Pick a song</h2>
+              <button className="ml-auto px-3 py-1 rounded hover:bg-slate-700" onClick={onClose} aria-label="Close">✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              <Section label="Songs" items={SONG_CATALOG.songs} />
+              <Section label="Scales" items={SONG_CATALOG.scales} />
+              <div className="mt-8">
+                <h3 className="text-sm font-semibold text-slate-200 mb-2">Or upload your own</h3>
+                <label className="inline-block pill cursor-pointer hover:brightness-110">
+                  <input className="hidden" type="file" accept=".mid,.midi,audio/midi" onChange={(e)=> onUploadFile(e.target.files?.[0] || null)} />
+                  <span>Upload MIDI…</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+
+
+    /******************************
      * App
      ******************************/
     function App() {
@@ -2083,6 +2151,7 @@ function Controls({
 
       const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
       const [isMobile, setIsMobile] = useState(window.matchMedia('(max-width: 640px)').matches);
+      const [pickerOpen, setPickerOpen] = useState(false);
       useEffect(() => {
         const onFs = () => setIsFullscreen(!!document.fullscreenElement);
         document.addEventListener('fullscreenchange', onFs);
@@ -2182,20 +2251,15 @@ function Controls({
         return () => ro.disconnect();
       }, []);
 
-
-      // Load MIDI from File
-      const onFile = async (file) => {
-        if (!file) return;
-        const arr = await file.arrayBuffer();
+      // Shared MIDI loader (from ArrayBuffer), used by both URL & File
+      const parseAndLoadMidi = async (arrayBuffer, sourceTitle = 'Untitled') => {
         const MidiClass = window.Midi || (window['tonejsMidi'] && window['tonejsMidi'].Midi) || window['TonejsMidi']?.Midi;
         if (!MidiClass) {
           alert('Failed to load @tonejs/midi. Please check your connection.');
           return;
         }
-        const midi = new MidiClass(arr);
-
-        // Header data
-        const title = midi.header.name || file.name || 'Untitled';
+        const midi = new MidiClass(arrayBuffer);
+        const title = midi.header.name || sourceTitle || 'Untitled';
         const tempos = midi.header.tempos?.length ? midi.header.tempos : [{ bpm: 120, ticks: 0 }];
         const bpm0 = tempos[0].bpm || 120;
         const ts = midi.header.timeSignatures?.length ? midi.header.timeSignatures[0] : { timeSignature: [4, 4] };
@@ -2204,41 +2268,20 @@ function Controls({
         const playableTracks = midi.tracks
           .map((t, i) => ({
             name: t.name || t.instrument?.name || `Track ${i + 1}`,
-            // keep a source index if you ever need it later
             srcIndex: i,
             notes: (t.notes || []).map(n => ({
-              name: n.name,
-              midi: n.midi,
-              time: n.time,
-              duration: n.duration,
-              ticks: n.ticks,
-              durationTicks: n.durationTicks,
-              velocity: n.velocity
+              name: n.name, midi: n.midi, time: n.time, duration: n.duration,
+              ticks: n.ticks, durationTicks: n.durationTicks, velocity: n.velocity
             }))
           }))
           .filter(t => (t.notes?.length || 0) > 0);
 
-        setMidiMeta({
-          title,
-          ppq: midi.header.ppq || 480,
-          tracks: playableTracks
-        });
-        // start from the first playable track
+        setMidiMeta({ title, ppq: midi.header.ppq || 480, tracks: playableTracks });
         setTrackIndex(0);
         setBpm(Math.round(bpm0));
         setTimeSig([tsArr[0] || 4, tsArr[1] || 4]);
 
-        // Notes from the first playable track
-        const selectedNotes = playableTracks[0]?.notes?.map(n => ({
-          name: n.name,
-          midi: n.midi,
-          time: n.time,
-          duration: n.duration,
-          ticks: n.ticks,
-          durationTicks: n.durationTicks,
-          velocity: n.velocity
-        })) || [];
-        // normalise starts at 0 for BOTH seconds and ticks
+        const selectedNotes = playableTracks[0]?.notes?.map(n => ({ ...n })) || [];
         const t0 = selectedNotes.length ? selectedNotes[0].time : 0;
         const t0Ticks = selectedNotes.length ? selectedNotes[0].ticks : 0;
         selectedNotes.forEach(n => { n.time -= t0; n.ticks -= t0Ticks; });
@@ -2248,19 +2291,41 @@ function Controls({
         Tone.Transport.bpm.value = bpm0;
         Tone.Transport.position = 0;
 
-        // Schedule audio in Transport ticks (scale MIDI PPQ -> Transport PPQ)
         const transportPPQ = Tone.Transport.PPQ || 192;
         const midiPPQ = midi.header.ppq || 480;
         const scaleToTransport = transportPPQ / midiPPQ;
         schedulePart(selectedNotes, scaleToTransport);
 
-        // Prepare lane events (kept in MIDI ticks space for visuals)
         const events = buildLaneEvents(selectedNotes, bpm0, noteNameToMask, lookahead);
         setLaneEvents(events);
 
         setRunning(false);
         setStats({ hitTime: 0, missTime: 0 });
         statsRef.current = { hitTime: 0, missTime: 0 };
+      };
+
+      // Load MIDI from a relative URL
+      const onPickUrl = async (url, displayTitle) => {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const buf = await res.arrayBuffer();
+          await parseAndLoadMidi(buf, displayTitle || url.split('/').pop());
+          setPickerOpen(false);
+        } catch (err) {
+          console.error(err);
+          alert('Could not load that song. Check the URL/file exists on the server.');
+        }
+      };
+
+
+
+      // Load MIDI from File
+      const onFile = async (file) => {
+        if (!file) return;
+        const arr = await file.arrayBuffer();
+        await parseAndLoadMidi(arr, file.name);
+        setPickerOpen(false);
       };
 
       // When trackIndex changes
@@ -2881,6 +2946,7 @@ function Controls({
               transposeSemis={transposeSemis}
               onTransposeSemis={setTransposeSemis}
               isMobile={isMobile}
+              onOpenPicker={() => setPickerOpen(true)}
             />
           </footer>
 
@@ -2900,6 +2966,11 @@ function Controls({
             setTransposeSemis={setTransposeSemis}
             onResetSettings={resetSettings}
           />
+
+          <SongPickerModal
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            onPickUrl={onPickUrl} onUploadFile={onFile} />
         </div>
       );
     }
