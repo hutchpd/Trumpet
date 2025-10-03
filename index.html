@@ -1172,13 +1172,15 @@
       running,
       currentTicks,    // live transport ticks (tempo-scaled)
       bpm,
-      ppq = 480
+      ppq = 480,
+      onTouchMaskChange
     }) {
 
       const canvasRef = useRef(null);
       const rafRef = useRef(null);
       const tickRef = useRef(0);
       useEffect(() => { tickRef.current = currentTicks || 0; }, [currentTicks]);
+      const activePointersRef = useRef(new Map());
 
       const hitYRatio = 0.88; // the hit line y position (as a proportion of height)
       const vanishYRatio = 0.18;           // where things originate (near top)
@@ -1209,6 +1211,39 @@
         window.addEventListener('resize', onResize);
         return () => window.removeEventListener('resize', onResize);
       }, [resizeCanvas]);
+
+      const recomputeTouchUnion = useCallback(() => {
+        let m = 0;
+        activePointersRef.current.forEach(v => { m |= v; });
+        onTouchMaskChange && onTouchMaskChange(m);
+      }, [onTouchMaskChange]);
+      const yToU = useCallback((y, hitY, vanishY) => {
+        const r = (y - vanishY) / Math.max(1, (hitY - vanishY));
+        return clamp(Math.pow(clamp(r, 0, 1), 1 / gamma), 0, 1);
+      }, []);
+      const laneMaskAtPoint = useCallback((x, y) => {
+        const hitY = Math.round(height * hitYRatio);
+        const vanishY = Math.round(height * vanishYRatio);
+        const centerX = width / 2;
+        const usableWidthAtHit = Math.min(width * totalWidthFrac, 560);
+        const laneWidthAtHit = (usableWidthAtHit - laneGapAtHit * 2) / 3;
+        const startLeftAtHit = centerX - usableWidthAtHit / 2;
+        const laneCenterAtHit = (i) => startLeftAtHit + i * (laneWidthAtHit + laneGapAtHit) + laneWidthAtHit / 2;
+        const u = yToU(y, hitY, vanishY);
+        const laneGeom = (i) => {
+          const cxHit = laneCenterAtHit(i);
+          const cx = centerX + (cxHit - centerX) * u;
+          const w = minLaneWidthFar + (laneWidthAtHit - minLaneWidthFar) * u;
+          return [cx, w];
+        };
+        let mask = 0;
+        [[0, VALVE1], [1, VALVE2], [2, VALVE3]].forEach(([i, bit]) => {
+          const [cx, w] = laneGeom(i);
+          if (x >= (cx - w / 2) && x <= (cx + w / 2)) mask |= bit;
+        });
+        return mask;
+      }, [height, width]);
+
 
       useEffect(() => {
         const c = canvasRef.current;
@@ -1500,7 +1535,40 @@
         };
       }, [laneEvents, keyStateMask, width, height, lookahead, running, frame, hitYRatio, vanishYRatio, bpm, ppq]);
 
-      return <canvas ref={canvasRef} className="w-full h-full rounded-md bg-transparent" />;
+      // Pointer handlers (touch/mouse)
+      const onPointerDown = (e) => {
+        const c = canvasRef.current; if (!c) return;
+        c.setPointerCapture?.(e.pointerId);
+        const rect = c.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const m = laneMaskAtPoint(x, y);
+        activePointersRef.current.set(e.pointerId, m);
+        recomputeTouchUnion();
+      };
+      const onPointerMove = (e) => {
+        if (!activePointersRef.current.has(e.pointerId)) return;
+        const c = canvasRef.current; if (!c) return;
+        const rect = c.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const m = laneMaskAtPoint(x, y);
+        activePointersRef.current.set(e.pointerId, m);
+        recomputeTouchUnion();
+      };
+      const onPointerUpOrCancel = (e) => {
+        if (activePointersRef.current.has(e.pointerId)) {
+          activePointersRef.current.delete(e.pointerId);
+          recomputeTouchUnion();
+        }
+      };
+
+      return (
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full rounded-md bg-transparent touch-none"
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+          onPointerUp={onPointerUpOrCancel} onPointerCancel={onPointerUpOrCancel}
+        />
+      );
     }
 
     /******************************
@@ -1607,6 +1675,17 @@
       bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
       stats, micNote, micEnabled, waitMode, onWaitMode, transposeSemis, onTransposeSemis
     }) {
+      if (running) {
+        return (
+          <div className="hud w-full flex items-center justify-center">
+            <div className="transport" role="group" aria-label="Transport">
+              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
+              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
+              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹) — pause and go to start" aria-label="Stop">⏹</button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="hud w-full">
           {/* LEFT CLUSTER: Track + Play-to-Advance */}
@@ -1783,26 +1862,28 @@
             <section className="mb-6">
               <h3 className="font-semibold mb-2">Input mapping</h3>
               <p className="text-xs text-slate-400 mb-2">Press a button to re-map; currently:</p>
-              <KeyMapRow
-                label="Valve 1"
-                capture={() => setCapturing('valve1')}
-                active={capturing === 'valve1'}
-                currentKey={displayKeyForValve(keyMap, VALVE1)}
-              />
-              <KeyMapRow
-                label="Valve 2"
-                capture={() => setCapturing('valve2')}
-                active={capturing === 'valve2'}
-                currentKey={displayKeyForValve(keyMap, VALVE2)}
-              />
-              <KeyMapRow
-                label="Valve 3"
-                capture={() => setCapturing('valve3')}
-                active={capturing === 'valve3'}
-                currentKey={displayKeyForValve(keyMap, VALVE3)}
-              />
-              <div className="mt-3">
-                <button className="text-xs underline text-slate-300" onClick={() => setKeyMap({ ...defaultKeyMap })}>Reset to A/S/D</button>
+              <div className="sm:block hidden">
+                <KeyMapRow
+                  label="Valve 1"
+                  capture={() => setCapturing('valve1')}
+                  active={capturing === 'valve1'}
+                  currentKey={displayKeyForValve(keyMap, VALVE1)}
+                />
+                <KeyMapRow
+                  label="Valve 2"
+                  capture={() => setCapturing('valve2')}
+                  active={capturing === 'valve2'}
+                  currentKey={displayKeyForValve(keyMap, VALVE2)}
+                />
+                <KeyMapRow
+                  label="Valve 3"
+                  capture={() => setCapturing('valve3')}
+                  active={capturing === 'valve3'}
+                  currentKey={displayKeyForValve(keyMap, VALVE3)}
+                />
+                <div className="mt-3">
+                  <button className="text-xs underline text-slate-300" onClick={() => setKeyMap({ ...defaultKeyMap })}>Reset to A/S/D</button>
+                </div>
               </div>
             </section>
 
@@ -1912,12 +1993,29 @@
       const initialSettings = useRef(loadSettings()).current;
       const [menuOpen, setMenuOpen] = useState(false);
       const [keyMap, setKeyMap] = useState({ ...initialSettings.keyMap });
+      const [keyMask, setKeyMask] = useState(0);
+      const [touchMask, setTouchMask] = useState(0);
       const [pressedMask, setPressedMask] = useState(0);
+      
       const [lookahead, setLookahead] = useState(initialSettings.lookahead);
       const [micEnabled, setMicEnabled] = useState(initialSettings.micEnabled);
       const [expertMode, setExpertMode] = useState(initialSettings.expertMode);
       const [waitMode, setWaitMode] = useState(initialSettings.waitMode);
       const [transposeSemis, setTransposeSemis] = useState(initialSettings.transposeSemis);
+
+      const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+      const [isMobile, setIsMobile] = useState(window.matchMedia('(max-width: 640px)').matches);
+      useEffect(() => {
+        const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', onFs);
+        const mq = window.matchMedia('(max-width: 640px)');
+        const onMM = (e) => setIsMobile(e.matches);
+        mq.addEventListener?.('change', onMM) || mq.addListener(onMM);
+        return () => {
+          document.removeEventListener('fullscreenchange', onFs);
+          mq.removeEventListener?.('change', onMM) || mq.removeListener(onMM);
+        };
+      }, []);
 
       const [midiMeta, setMidiMeta] = useState({ title: 'No song loaded', tracks: [] });
       const [trackIndex, setTrackIndex] = useState(0);
@@ -1939,6 +2037,11 @@
       useEffect(() => {
         persistSettings({ keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis });
       }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis]);
+
+      // Combine keyboard + touch into effective pressed mask
+      useEffect(() => {
+        setPressedMask(keyMask | touchMask);
+      }, [keyMask, touchMask]);      
 
       // Optional nicety: if user previously enabled mic, only auto-enable
       // when permission is already granted (prevents surprise prompt on load)
@@ -2305,7 +2408,7 @@
           if (k === ' ') { e.preventDefault(); togglePlay(); return; }
           if (keyMap[k]) {
             e.preventDefault();
-            setPressedMask((m) => {
+            setKeyMask((m) => {
               const next = (m | keyMap[k]);
               if (next !== m) markChange();
               return next;
@@ -2316,7 +2419,7 @@
           const k = e.key.toLowerCase();
           if (keyMap[k]) {
             e.preventDefault();
-            setPressedMask((m) => {
+            setKeyMask((m) => {
               const next = (m & ~keyMap[k]);
               if (next !== m) markChange();
               return next;
@@ -2550,7 +2653,7 @@
       const trackNames = (midiMeta.tracks || []).map(t => t.name);
 
       // Current container sizes
-      const scoreHeight = 220; // top-third-ish, responsive
+      const scoreHeight = isMobile ? 160 : 220;
       const highwayHeight = 320;
 
       const pulseAmpRef = useRef(0);
@@ -2592,11 +2695,23 @@
             <div className="text-sm text-slate-300">Trumpet Trainer</div>
             <div className="mx-2 w-px h-6 bg-slate-700/80" />
             <div className="font-semibold truncate">{songTitle}</div>
-            <div className="ml-auto text-xs opacity-90 flex items-center gap-2">
-              <span className="text-slate-300">Valves:</span>
-              <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE1) || 'A'}</span>
-              <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE2) || 'S'}</span>
-              <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE3) || 'D'}</span>
+            <div className="ml-auto flex items-center gap-2">
+              {/* Fullscreen toggle (mobile & desktop) */}
+              <button
+                className="p-2 rounded hover:bg-slate-700 text-lg"
+                title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                onClick={() => {
+                  if (!document.fullscreenElement) { document.documentElement.requestFullscreen?.(); }
+                  else { document.exitFullscreen?.(); }
+                }}
+              >⛶</button>
+              {/* Hide valve key legends on small screens */}
+              <div className="text-xs opacity-90 items-center gap-2 hidden sm:flex">
+                <span className="text-slate-300">Valves:</span>
+                <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE1) || 'A'}</span>
+                <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE2) || 'S'}</span>
+                <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.25)' }}>{displayKeyForValve(keyMap, VALVE3) || 'D'}</span>
+              </div>
             </div>
           </header>
 
@@ -2626,7 +2741,7 @@
           <section id="highway" className="flex-1 px-3 py-3">
             <div
               ref={highwayBoxRef}
-              className="grid-drift relative w-full h-full min-h-[260px] overflow-hidden"
+              className="grid-drift relative w-full h-full min-h-[200px] sm:min-h-[260px] overflow-hidden"
               style={{
                 '--beat': (60 / (bpm || 120)) + 's',
                 '--cell': Math.round(
@@ -2645,6 +2760,7 @@
                 currentTicks={transportTicks}
                 bpm={bpm}
                 ppq={midiMeta.ppq || 480}
+                onTouchMaskChange={setTouchMask}
               />
               {/* Hit line overlay (for visual crispness) */}
               <div className="hitline" style={{ top: ((canvasSize.h || highwayHeight) * 0.88) + 'px' }}></div>
