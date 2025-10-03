@@ -1749,6 +1749,27 @@
     /******************************
      * Controls
      ******************************/
+    const IconPlay = (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+        <path d="M8 5.14v13.72c0 .8.86 1.3 1.56.88l10.2-6.86a1 1 0 0 0 0-1.64L9.56 4.38A1 1 0 0 0 8 5.14Z"/>
+      </svg>
+    );
+    const IconPause = (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+        <path d="M7 5h4v14H7zM13 5h4v14h-4z"/>
+      </svg>
+    );
+    const IconStop = (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+        <path d="M6 6h12v12H6z"/>
+      </svg>
+    );
+    const IconToStart = (props) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+        <path d="M5 5h2v14H5zM21 6.5v11c0 .8-.86 1.3-1.56.88L9.24 13.5a1 1 0 0 1 0-1.64l10.2-4.88c.7-.42 1.56.08 1.56.88Z"/>
+      </svg>
+    );
+
     function Controls({
       isLoaded, running, onPlayPause, onStop, onGoStart,
       bpm, onBpm, onFile, trackNames, trackIndex, onTrackIndex,
@@ -1760,9 +1781,15 @@
         return (
           <div className="hud w-full flex items-center justify-center">
             <div className="transport" role="group" aria-label="Transport">
-              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
-              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start" aria-label="Back to start">
+                <IconToStart />
+              </button>
+              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space)" : "Play (Space)"} aria-label={running ? "Pause" : "Play"}>
+                {running ? <IconPause /> : <IconPlay />}
+              </button>
+              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop" aria-label="Stop">
+                <IconStop />
+              </button>
             </div>
           </div>
         );
@@ -1776,9 +1803,15 @@
               {/* Transport – centered & big */}
               <div className="col-span-2 flex justify-center">
                 <div className="transport" role="group" aria-label="Transport">
-                  <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-                  <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space) ⏸️" : "Play (Space) ▶"} aria-label={running ? "Pause" : "Play"}>{running ? '⏸️' : '▶'}</button>
-                  <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+                  <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start" aria-label="Back to start">
+                    <IconToStart />
+                  </button>
+                  <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title={running ? "Pause (Space)" : "Play (Space)"} aria-label={running ? "Pause" : "Play"}>
+                    {running ? <IconPause /> : <IconPlay />}
+                  </button>
+                  <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop" aria-label="Stop">
+                    <IconStop />
+                  </button>
                 </div>
               </div>
 
@@ -1899,9 +1932,19 @@
           {/* CENTER CLUSTER */}
           <div className="justify-self-center">
             <div className="transport" role="group" aria-label="Transport">
-              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start (⏮)" aria-label="Back to start">⏮</button>
-              <button className="tbtn play" onClick={onPlayPause} disabled={!isLoaded} title="Play (Space) ▶" aria-label="Play">▶</button>
-              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop (⏹)" aria-label="Stop">⏹</button>
+              <button className="tbtn" onClick={onGoStart} disabled={!isLoaded} title="Back to start" aria-label="Back to start">
+                <IconToStart />
+              </button>
+              <button
+                className="tbtn play"
+                onClick={onPlayPause}
+                disabled={!isLoaded}
+                title={running ? "Pause (Space)" : "Play (Space)"}
+                aria-label={running ? "Pause" : "Play"}
+              >
+                {running ? <IconPause /> : <IconPlay />}
+              </button>
+              <button className="tbtn" onClick={onStop} disabled={!isLoaded} title="Stop" aria-label="Stop"><IconStop /></button>
             </div>
           </div>
 
@@ -2260,7 +2303,7 @@
       const statsRef = useRef({ hitTime: 0, missTime: 0 });
       const pressedMaskRef = useRef(0);
 
-      const showHighway = !isMobile || (running && notes.length > 0);
+      const showHighway = !isMobile || (notes.length > 0 && (running || waitMode));
 
       // Persist whenever any user-facing setting changes
       useEffect(() => {
@@ -2670,9 +2713,22 @@
 
       useEffect(() => {
         const markChange = () => { lastKeyChangeSecRef.current = performance.now() / 1000; };
+        const isTypingTarget = (el) => {
+          if (!el) return false;
+          const tag = (el.tagName || '').toLowerCase();
+          return el.isContentEditable || ['input', 'textarea', 'select'].includes(tag);
+        };
         const handleDown = (e) => {
-          const k = e.key.toLowerCase();
-          if (k === ' ') { e.preventDefault(); togglePlay(); return; }
+          // Space = play/pause (use code for cross-browser reliability)
+          if (e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar') {
+            if (!isTypingTarget(e.target)) {
+              e.preventDefault();         // stop the default button/scroll behavior
+              e.stopPropagation();        // avoid double toggles from focused buttons
+              togglePlay();
+              return;
+            }
+          }
+          const k = (e.key || '').toLowerCase();
           if (keyMap[k]) {
             e.preventDefault();
             setKeyMask((m) => {
@@ -2682,6 +2738,7 @@
             });
           }
         };
+
         const handleUp = (e) => {
           const k = e.key.toLowerCase();
           if (keyMap[k]) {
@@ -3056,7 +3113,9 @@
             <section className="px-3 py-3 sm:hidden">
               <div className="w-full rounded-md border border-slate-700/60 bg-slate-900/40 p-4 text-center text-slate-300">
                 Game will start when you press <span className="font-semibold">Play</span>.
-                <div className="text-xs text-slate-400 mt-1">Upload a MIDI and pick a track first.</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  Choose a song and pick a track first{waitMode ? ', or turn off Play-to-Advance.' : '.'}
+                </div>
               </div>
             </section>
           )}
