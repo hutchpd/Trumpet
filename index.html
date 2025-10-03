@@ -1677,7 +1677,7 @@ function Controls({
   isMobile
 }) {
   // Minimal when running (both desktop & mobile)
-  if (running) {
+  if (running  && isMobile) {
     return (
       <div className="hud w-full flex items-center justify-center">
         <div className="transport" role="group" aria-label="Transport">
@@ -2819,7 +2819,7 @@ function Controls({
 
           {/* Highway */}
           {showHighway ? (
-            <section id="highway" className="flex-1 px-3 py-3">
+            <section id="highway" ref={highwayBoxRef} className="flex-1 px-3 py-3">
               <div
                 ref={highwayBoxRef}
                 className="grid-drift relative w-full h-full min-h-[200px] sm:min-h-[260px] overflow-hidden"
