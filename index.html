@@ -614,22 +614,22 @@
       const initAudio = useCallback(async () => {
         if (initedRef.current) return;
         await Tone.start();               // ensure user-gesture start
-        // Build synth chain AFTER gesture to avoid autoplay warnings
+
+        // Single path: Synths -> Limiter -> Destination
+        const limiter = new Tone.Limiter(-6).toDestination();
+
         const leadSynth = new Tone.PolySynth(Tone.Synth, {
           oscillator: { type: 'sawtooth' },
           envelope: { attack: 0.005, decay: 0.2, sustain: 0.15, release: 0.2 },
           volume: -8
-        }).toDestination();
-        const limiter = new Tone.Limiter(-6).toDestination();
-        leadSynth.connect(limiter);
+        }).connect(limiter);
 
-        // Backing: slightly software, mellower timbre
+        // Backing: slightly softer, mellower timbre
         const backingSynth = new Tone.PolySynth(Tone.Synth, {
           oscillator: { type: 'triangle' },
           envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.3 },
           volume: -12
-        }).toDestination();
-        backingSynth.connect(limiter);
+        }).connect(limiter);
 
         leadSynthRef.current = leadSynth;
         backingSynthRef.current = backingSynth;
@@ -2571,6 +2571,13 @@
         setBackingMuted
       } = useToneSetup();
 
+      const clearPart = React.useCallback(() => {
+        try { clearLeadPart(); } catch {}
+        try { clearBackingPart(); } catch {}
+        try { Tone.Transport.cancel(); } catch {}
+      }, [clearLeadPart, clearBackingPart]);
+
+
       // Stable sizing via ResizeObserver (prevents layout creep)
       useEffect(() => {
         const el = highwayMeasureRef.current;
@@ -2668,6 +2675,8 @@
         const scaleToTransport = transportPPQ / midiPPQ;
         scheduleLeadPart(selectedNotes, scaleToTransport);
         scheduleBackingPart(backingNotes, scaleToTransport);
+
+        
 
         const events = buildLaneEvents(selectedNotes, bpm0, noteNameToMask, lookahead);
         setLaneEvents(events);
