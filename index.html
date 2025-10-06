@@ -56,12 +56,20 @@
       --hud: #6aa4ff;
     }
 
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,1px,1px); white-space:nowrap; border:0; }
+
+
     html,
     body,
     #root {
       height: 100dvh;
       min-height: 100dvh;
     }
+
+    .take-marker { font: 700 12px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto; paint-order: stroke; stroke: rgba(2,6,23,.8); stroke-width: 2; }
+    .take-marker.correct { fill: #22c55e; }      /* emerald-500 */
+    .take-marker.incorrect { fill: #ef4444; }    /* rose-500   */
+
 
     body {
       margin: 0;
@@ -367,8 +375,11 @@
       waitMode: false,
       transposeSemis: 2, // B♭
       showScore: true,
-      showHighway: true
+      showHighway: true,
+      showNoteNames: false
     };
+
+    const DEFAULT_OVERLAY = { showLastTake: true, overlayOpacity: 0.9};
     function loadSettings() {
       try {
         const raw = localStorage.getItem(SETTINGS_KEY);
@@ -378,7 +389,9 @@
         return {
           ...DEFAULT_SETTINGS,
           ...parsed,
-          keyMap: { ...defaultKeyMap, ...(parsed.keyMap || {}) }
+          keyMap: { ...defaultKeyMap, ...(parsed.keyMap || {}) },
+          showLastTake: parsed.showLastTake ?? DEFAULT_OVERLAY.showLastTake,
+          overlayOpacity: parsed.overlayOpacity ?? DEFAULT_OVERLAY.overlayOpacity
         };
       } catch {
         return { ...DEFAULT_SETTINGS };
@@ -388,7 +401,7 @@
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { }
     }, 150);
 
-
+    const ONSET_TOL_MS = 80, LATE_MISS_MS = 150;
 
     const noteToMask = {
       'F#3': VALVE1 | VALVE2 | VALVE3, 'Gb3': VALVE1 | VALVE2 | VALVE3,
@@ -768,13 +781,18 @@
       width,
       micEnabled, micNote, expertMode, toleranceCents = 35,
       height,
+      showNoteNames = false,
       measuresPerRow = 2,
-      onSeekTicks
+      onSeekTicks,
+      lastTake = [],
+      showLastTake = true,
+      overlayOpacity = 0.9,
     }) {
       const scrollRef = React.useRef(null);     // scrollable viewport
       const hostRef = React.useRef(null);     // where VexFlow SVG mounts
       const overlayRef = React.useRef(null);     // absolute overlay for cursor
       const micHostRef = React.useRef(null); // seperates SVG overlay for mic voice
+      const takeHostRef = React.useRef(null); // layer for last-take markers
       const draggingRef = React.useRef(false);
       const dragStart = React.useRef({ y: 0, top: 0 });
       const lastMeasureRef = React.useRef(-1);    // autoscroll per bar, not per row
@@ -831,6 +849,9 @@
         return (ppq || 480) * num * (4 / den);
       }, [timeSig, ppq]);
 
+      // expose for overlay renderer
+      React.useImperativeHandle(overlayApiRef, () => ({ rectsRef, orderByMeasureRef, domNotesByMeasureRef }), []);
+
       // Draw whole score
       React.useEffect(() => {
         const el = hostRef.current;
@@ -856,6 +877,15 @@
           const acc = m[2] || '';
           const oct = m[3];
           return `${letter}${acc}/${oct}`;
+        };
+
+        const prettyNoteName = (name) => {
+          const m = /^([A-Ga-g])([b#]?)(-?\d+)$/.exec(name || '');
+          if (!m) return '';
+          const L = m[1].toUpperCase();
+          const acc = m[2] === '#' ? '♯' : (m[2] === 'b' ? '♭' : '');
+          const oct = m[3];
+          return `${L}${acc}${oct}`;
         };
 
         // Build rects for each measure (for cursor & seeking)
@@ -895,6 +925,13 @@
               const accSym = accMatch ? (accMatch[2] || '') : '';
               if (accSym) n.addAccidental(0, new VF.Accidental(accSym));
               if (q.dots) n.addDot(0);
+
+               if (showNoteNames) {
+                 const ann = new VF.Annotation(prettyNoteName(e.name || ''))
+                   .setFont('ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto', 10, 'normal')
+                   .setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
+                 n.addAnnotation(0, ann);
+               }
 
               // record order for later DOM mapping (ticks -> note index in this measure)
               const midiVal = noteNameToMidi(e.name);
@@ -987,7 +1024,8 @@
 
         } catch { }
 
-
+        // Clear last-take layer whenever we redraw staff
+        if (takeHostRef.current) takeHostRef.current.innerHTML = '';
 
         try {
           const svg = el.querySelector('svg');
@@ -1019,6 +1057,8 @@
             svg.querySelectorAll('.vf-stave path, .vf-barline path').forEach(n => n.setAttribute('stroke', STAFF));
           }
         } catch { }
+
+
 
         // Normalise staff, clef, time-signature colours
         try {
@@ -1210,6 +1250,50 @@
         onSeekTicks && onSeekTicks(targetTicks);
       };
 
+      React.useEffect(() => {
+        // Render markers only when asked, only when not running
+        const host = takeHostRef.current;
+        if (!host) return;
+        host.innerHTML = '';
+        if (!showLastTake || running || !Array.isArray(lastTake) || !lastTake.length) return;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', String(width));
+        svg.setAttribute('height', String(contentHeight));
+        svg.setAttribute('viewBox', `0 0 ${width} ${contentHeight}`);
+        svg.setAttribute('aria-hidden', 'true');
+        svg.style.opacity = String(clamp(overlayOpacity ?? 1, 0, 1));
+        const g = document.createElementNS(svg.namespaceURI, 'g');
+        const frag = document.createDocumentFragment();
+        // place one marker per expected note
+        for (const item of lastTake) {
+          const { measure, idxInMeasure, result, timingErrorMs } = item.__loc || {};
+          if (measure == null || idxInMeasure == null) continue;
+          const list = (domNotesByMeasureRef.current[measure] || []);
+          const h = list[idxInMeasure]; if (!h) continue;
+          const x = h.cx, y = (rectsRef.current[measure]?.y || 0) + 20; // roughly above notehead center
+          // marker: ✔/✖ plus small chevron for early/late
+          const txt = document.createElementNS(svg.namespaceURI, 'text');
+          txt.setAttribute('x', Math.round(x)); txt.setAttribute('y', Math.round(y));
+          txt.setAttribute('text-anchor', 'middle'); txt.setAttribute('class', `take-marker ${result === 'hit' || result === 'partial' ? 'correct' : 'incorrect'}`);
+          txt.textContent = (result === 'hit' || result === 'partial') ? '✔' : '✖';
+          // timing chevron
+          if (Number.isFinite(timingErrorMs) && Math.abs(timingErrorMs) >= 5) {
+            const chev = document.createElementNS(svg.namespaceURI, 'text');
+            chev.setAttribute('x', Math.round(x + (timingErrorMs < 0 ? -12 : 12)));
+            chev.setAttribute('y', Math.round(y));
+            chev.setAttribute('text-anchor', timingErrorMs < 0 ? 'end' : 'start');
+            chev.setAttribute('class', `take-marker ${result === 'hit' || result === 'partial' ? 'correct' : 'incorrect'}`);
+            chev.textContent = timingErrorMs < 0 ? '‹' : '›';
+            g.appendChild(chev);
+          }
+          g.appendChild(txt);
+        }
+        svg.appendChild(g);
+        frag.appendChild(svg);
+        host.appendChild(frag);
+      }, [lastTake, showLastTake, overlayOpacity, running, width, contentHeight]);
+
+
       return (
         <div className="w-full h-full relative">
           <div
@@ -1224,6 +1308,7 @@
             <div style={{ position: 'relative', width: `${width}px`, height: `${contentHeight}px` }}>
               <div ref={hostRef} className="vf-host absolute inset-0" style={{ zIndex: 1 }} />
               <div ref={micHostRef} className="absolute inset-0 pointer-events-none" style={{ zIndex: 2 }} />
+              <div ref={takeHostRef} className="absolute inset-0 pointer-events-none" style={{ zIndex: 3 }} />
               <div
                 ref={overlayRef}
                 style={{
@@ -1231,7 +1316,7 @@
                   background: '#fde047',
                   boxShadow: '0 0 0 2px rgba(253,224,71,.25), 0 0 12px rgba(253,224,71,.6)',
                   pointerEvents: 'none',
-                  zIndex: 3
+                  zIndex: 4
                 }}
               />
             </div>
@@ -1239,6 +1324,8 @@
         </div>
       );
     }
+
+    const overlayApiRef = React.createRef();
 
     /******************************
      * Canvas Note Highway
@@ -2190,6 +2277,9 @@
       transposeSemis, setTransposeSemis,
       showScore, setShowScore,
       showHighway, setShowHighway,
+      showNoteNames, setShowNoteNames,
+      showLastTake, setShowLastTake,
+      overlayOpacity, setOverlayOpacity,
       onResetSettings = () => { },
     }) {
       const [capturing, setCapturing] = useState(null); // 'valve1' | ...
@@ -2269,6 +2359,35 @@
                 />
                 <span>Show highway (valve lanes)</span>
               </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  onChange={(e) => setShowNoteNames(e.target.checked)}
+                  id="show-note-names-toggle"
+                  checked={showNoteNames}
+                />
+                <span>Show note names on score</span>
+              </label>
+
+              <div className="mt-3 pt-3 border-t border-slate-700/60">
+                <h4 className="font-semibold mb-2">Last take overlay</h4>
+                <label className="flex items-center gap-2 text-sm mb-2">
+                  <input
+                    type="checkbox"
+                    checked={showLastTake}
+                    onChange={(e) => setShowLastTake(e.target.checked)}
+                  />
+                  <span>Show last take overlay</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="text-slate-300">Opacity</span>
+                  <input className="flex-1" type="range" min="0" max="1" step="0.05" value={overlayOpacity}
+                         onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))} />
+                  <span className="w-10 text-right">{Math.round((overlayOpacity ?? 1)*100)}</span>
+                  <span className="text-slate-400 text-xs ml-1">%</span>
+                </label>
+              </div>
+
             </section>
 
             <section className="mb-6">
@@ -2467,6 +2586,12 @@
         typeof initialSettings.showHighway === 'boolean' ? initialSettings.showHighway : true
       );
 
+      const [showNoteNames, setShowNoteNames] = useState(
+        typeof initialSettings.showNoteNames === 'boolean' ? initialSettings.showNoteNames : false
+      );
+
+      const [showLastTake, setShowLastTake] = useState(!!initialSettings.showLastTake);
+      const [overlayOpacity, setOverlayOpacity] = useState(initialSettings.overlayOpacity ?? 0.9);
 
       const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
       const [isMobile, setIsMobile] = useState(window.matchMedia('(max-width: 640px)').matches);
@@ -2491,6 +2616,34 @@
       const [bpm, setBpm] = useState(120);
       const [timeSig, setTimeSig] = useState([4, 4]);
 
+      // -------- RunLog for last take --------
+      // live accumulation during a run (key/mic timing)
+      const runLogRef = useRef([]);        // Array<RunLogItem>
+      const [lastTake, setLastTake] = useState(null); // frozen copy to render
+      // quick index for startTicks -> note index
+      const noteIndexByStartRef = useRef(new Map());
+      // helper to reset logs
+      const resetRunLog = useCallback(() => { runLogRef.current = []; setLastTake(null); }, []);
+      // utility to mark/merge a note judgement (once per expected note)
+      const upsertRunLog = useCallback((noteIdx, patch) => {
+        if (noteIdx == null || noteIdx < 0 || noteIdx >= notes.length) return;
+        const n = notes[noteIdx];
+        let rec = runLogRef.current.find(r => r.noteIndex === noteIdx);
+        if (!rec) {
+          rec = {
+            noteIndex: noteIdx,
+            startTicks: n.ticks || 0,
+            endTicks: (n.ticks || 0) + (n.durationTicks || 0),
+            expectedPitch: n.midi ?? noteNameToMidi(n.name),
+            result: 'miss',
+            source: 'keys',
+            timingErrorMs: null
+          };
+          runLogRef.current.push(rec);
+        }
+        Object.assign(rec, patch || {});
+      }, [notes]);
+
       const [running, setRunning] = useState(false);
       const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
       const highwayMeasureRef = useRef(null);
@@ -2510,9 +2663,10 @@
       useEffect(() => {
         persistSettings({
           keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis,
-          showScore, showHighway: showHighwaySetting
+          showScore, showHighway: showHighwaySetting,
+          showNoteNames, showLastTake, overlayOpacity
         });
-      }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis, showScore, showHighwaySetting]);
+      }, [keyMap, lookahead, micEnabled, expertMode, waitMode, transposeSemis, showScore, showHighwaySetting, showNoteNames, showLastTake, overlayOpacity]);
 
       // Combine keyboard + touch into effective pressed mask
       useEffect(() => {
@@ -2662,6 +2816,15 @@
         setNotes(selectedNotes);
 
         // Build backing = all other tracks, aligned to selected's start, clamp to >= 0
+        // Build note index map for overlay placement
+        noteIndexByStartRef.current = new Map();
+        selectedNotes.forEach((n, i) => {
+          noteIndexByStartRef.current.set((n.ticks || 0), i);
+        });
+        // clear prior logs/overlay on new load
+        resetRunLog();
+        setLastTake(null);
+
         const backingRaw = playableTracks.slice(1).flatMap(t => t.notes || []);
         const backingNotes = backingRaw.map(n => ({
           ...n,
@@ -2687,6 +2850,7 @@
         setRunning(false);
         setStats({ hitTime: 0, missTime: 0 });
         statsRef.current = { hitTime: 0, missTime: 0 };
+        resetRunLog();
       };
 
       // Load MIDI from a relative URL
@@ -2726,6 +2890,13 @@
         setNotes(n);
         Tone.Transport.cancel();
         Tone.Transport.position = 0;
+        // refresh index map + clear overlay/logs
+        noteIndexByStartRef.current = new Map();
+        n.forEach((m, i) => {
+          noteIndexByStartRef.current.set((m.ticks || 0), i);
+        });
+        resetRunLog();
+        setLastTake(null);
         const transportPPQ = Tone.Transport.PPQ || 192;
         const midiPPQ = midiMeta.ppq || 480;
         const scaleToTransport = transportPPQ / midiPPQ;
@@ -2761,7 +2932,31 @@
       }, [bpm]);
 
       // Visual-only judgement (keeps lane glow etc.);
-      const onHitJudgement = useCallback(() => { pulseAmpRef.current = Math.min(1, pulseAmpRef.current + 0.6); }, []);
+      const onHitJudgement = useCallback((ev, ok, errorMs) => {
+        pulseAmpRef.current = Math.min(1, pulseAmpRef.current + 0.6);
+        // Map event.startTicks -> note index and record a single per-note judgement
+        const idx = noteIndexByStartRef.current.get(ev.startTicks || 0);
+        if (idx != null) {
+          const micOk = (() => {
+            if (!micEnabled) return false;
+            const expected = notes[idx];
+            const expMidi = expected?.midi ?? noteNameToMidi(expected?.name || '');
+            if (!Number.isFinite(expMidi)) return false;
+            // same logic as mic overlay: exact midi or within ~35¢ (when not expert)
+            if (window.__lastMicNoteWritten?.midi === expMidi) return true;
+            if (!expertMode && window.__lastMicNoteWritten?.freq) {
+              const c = centsDiff(window.__lastMicNoteWritten.freq, midiToFreq(expMidi));
+              return Math.abs(c) <= 35;
+            }
+            return false;
+          })();
+          upsertRunLog(idx, {
+            result: ok ? 'hit' : 'miss',
+            source: (ok && micOk) ? 'both' : (ok ? 'keys' : (micOk ? 'mic' : 'keys')),
+            timingErrorMs: (errorMs != null ? Math.round(errorMs) : null)
+          });
+        }
+      }, [micEnabled, expertMode, notes, upsertRunLog]);
 
       // Play / Pause
       const togglePlay = async () => {
@@ -2769,6 +2964,8 @@
         if (!notes.length) return;
         if (waitMode) {
           if (!running) {
+            setLastTake(null);
+            resetRunLog();
             try { Tone.Transport.stop(); } catch { }
             clearPart();              // ensure nothing is scheduled
             setRunning(true);         // drive our own gate loop/UI
@@ -2784,6 +2981,8 @@
         }
         // Normal mode: Transport drives playback
         if (Tone.Transport.state !== 'started') {
+          setLastTake(null);
+          resetRunLog();
           Tone.Transport.start('+0.05');
           setRunning(true);
         } else {
@@ -2798,6 +2997,7 @@
         const transportPPQ = Tone.Transport.PPQ || 192;
         const toTransport = transportPPQ / midiPPQ;
         try {
+          setLastTake(null);
           // In normal mode, if playing, jump while staying started; otherwise pause at start
           if (!waitMode && running && Tone.Transport.state === 'started') {
             Tone.Transport.ticks = 0;
@@ -2807,6 +3007,8 @@
           }
         } catch { }
         setTransportTicks(0);
+        setLastTake(null);
+        resetRunLog();
         // In hold-to-advance mode, (re)arm the first playable note for gating if running
         if (waitMode && running) {
           gateRef.current = { active: false, noteIndex: -1 };
@@ -2846,6 +3048,40 @@
             const totalT = stats.hitTime + stats.missTime;
             const acc = totalT ? Math.round(100 * stats.hitTime / totalT) : 0;
             console.log(`Session complete. Accuracy: ${acc}%`);
+            // Build/finish RunLog for all expected notes and freeze it for overlay.
+            // Ensure every note has an entry; infer 'miss' where none recorded (late misses respected).
+            const msPerTick = 60000 / ((midiMeta.ppq || 480) * bpm);
+            const finished = notes.map((n, i) => {
+              let rec = runLogRef.current.find(r => r.noteIndex === i);
+              if (!rec) {
+                rec = {
+                  noteIndex: i,
+                  startTicks: n.ticks || 0,
+                  endTicks: (n.ticks || 0) + (n.durationTicks || 0),
+                  expectedPitch: n.midi ?? noteNameToMidi(n.name),
+                  result: 'miss',
+                  source: micEnabled ? 'mic' : 'keys',
+                  timingErrorMs: null
+                };
+              }
+              // Determine measure/index for placement using ScoreDisplay ordering
+              const [num, den] = timeSig || [4,4];
+              const beatsPerMeasure = num;
+              const beats = ((n.ticks || 0) / (midiMeta.ppq || 480)) * (4 / den);
+              const measure = Math.floor(beats / beatsPerMeasure);
+              // index of this note inside its measure per orderByMeasureRef
+              let idxInMeasure = 0;
+              try {
+                const ord = overlayApiRef.current?.orderByMeasureRef?.current?.[measure] || [];
+                idxInMeasure = Math.max(0, ord.findIndex(o => (o.startTicks || 0) === (n.ticks || 0)));
+              } catch {}
+              rec.__loc = { measure, idxInMeasure, ticks: n.ticks || 0 };
+              return rec;
+            });
+            // Freeze once per stop event
+            setLastTake(finished);
+            // Keep the live buffer for potential inspection, but we won't mutate it further.
+
           } else {
             raf = requestAnimationFrame(check);
           }
@@ -3120,6 +3356,16 @@
 
               // Completed required duration? Jump to end of note and resume.
               if (gate.holdTicks >= (gate.requiredTicks || 0)) {
+                // In wait mode, a note is considered correct once the player advances.
+                const prevIdx = gate.noteIndex;
+                if (prevIdx >= 0) {
+                  upsertRunLog(prevIdx, {
+                    result: 'hit',
+                    source: micEnabled ? 'mic' : 'keys',
+                    timingErrorMs: 0
+                  });
+                }
+
                 // Advance to the *next* playable note and re-arm the gate (stay paused)
                 let nextIdx = gate.noteIndex + 1;
                 // Skip any notes that don't map to a valve combo, if any
@@ -3310,6 +3556,7 @@
                   bpm={bpm}
                   timeSig={timeSig}
                   ppq={midiMeta.ppq || 480}
+                  showNoteNames={showNoteNames}
                   currentTicks={transportTicks}
                   running={running}
                   width={
@@ -3324,6 +3571,10 @@
                   }
                   measuresPerRow={2}
                   onSeekTicks={handleSeekTicks}
+                  ref={overlayApiRef}
+                  lastTake={lastTake}
+                  showLastTake={showLastTake}
+                  overlayOpacity={overlayOpacity}
                   micEnabled={micEnabled}
                   micNote={micNote}
                   expertMode={expertMode}
@@ -3430,6 +3681,12 @@
             setShowScore={setShowScore}
             showHighway={showHighwaySetting}
             setShowHighway={setShowHighway}
+            showNoteNames={showNoteNames}
+            setShowNoteNames={setShowNoteNames}
+            showLastTake={showLastTake}
+            setShowLastTake={setShowLastTake}
+            overlayOpacity={overlayOpacity}
+            setOverlayOpacity={setOverlayOpacity}
             onResetSettings={resetSettings}
           />
 
